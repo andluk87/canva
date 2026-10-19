@@ -40,4 +40,8 @@ export type Project = {
   deleted: number;
   updated: string;
 };
-export const uid = () => crypto.randomUUID();
+export const uid = () =>
+  crypto.randomUUID?.() ||
+  [...crypto.getRandomValues(new Uint8Array(16))]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");

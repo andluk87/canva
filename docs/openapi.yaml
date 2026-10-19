@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Forma Core API
-  version: 0.1.0
+  version: 0.2.0
   description: Session-cookie API. Project writes require matching revision; conflicts return 409. See README for scope limitations.
 servers:
   - url: /api
@@ -261,3 +261,15 @@ paths:
               { image/png: { schema: { type: string, format: binary } } },
           }
         "404": { description: Absent or inaccessible asset }
+
+  /projects/{id}/live:
+    parameters:
+      - { $ref: "#/components/parameters/projectId" }
+    get:
+      description: WebSocket Upgrade with same-origin session cookie. See REALTIME.md for message protocol.
+      responses:
+        "101": { description: WebSocket connection established }
+        "401": { description: Login required }
+        "403": { description: Origin rejected }
+        "404": { description: Project absent or inaccessible }
+        "429": { description: Connection limit }

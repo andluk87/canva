@@ -53,7 +53,10 @@ import {
 import { api, json, Project, User, DesignPage, uid } from "./api";
 import { templates, templateDocument } from "./templates";
 import { Modal, Artwork } from "./ui";
+import { Collaboration, type Peer } from "./collaboration";
+import type { Snapshot } from "../shared/collaboration.mjs";
 FabricObject.customProperties = [
+  "id",
   "lockMovementX",
   "lockMovementY",
   "lockScalingX",
@@ -99,23 +102,33 @@ export default function Editor({
     [snap, setSnap] = useState(false),
     [panelError, setPanelError] = useState("");
   const [historyTick, setHistoryTick] = useState(0);
-  const history = useRef<string[]>([]),
-    historyIndex = useRef(-1),
-    dirty = useRef(false),
-    saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null),
-    savePromise = useRef<Promise<void> | null>(null),
-    conflict = useRef(false);
-  const readOnly = project.role === "viewer";
+  const dirty = useRef(false),
+    saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const live = useRef<Collaboration | null>(null),
+    pendingRemote = useRef<Snapshot | null>(null),
+    remoteTimer = useRef<ReturnType<typeof setTimeout> | null>(null),
+    dragging = useRef(false),
+    drainRef = useRef<() => void>(() => {});
+  const [liveReady, setLiveReady] = useState(false),
+    [liveRole, setLiveRole] = useState<string>(project.role),
+    [peers, setPeers] = useState<Peer[]>([]),
+    [self, setSelf] = useState(""),
+    [applying, setApplying] = useState(false);
+  const readOnly = liveRole === "viewer" || !liveReady || applying;
+  const editable = useRef(false);
+  editable.current = !readOnly;
   const snapRef = useRef(false);
   snapRef.current = snap;
   const changeRef = useRef<() => void>(() => {});
   const saveRef = useRef<() => Promise<void>>(async () => {});
   function capture() {
-    if (canvas.current && !loading.current)
+    if (canvas.current && !loading.current) {
+      for (const o of canvas.current.getObjects()) (o as any).id ||= uid();
       pagesRef.current[pageIndex.current] = {
         ...pagesRef.current[pageIndex.current],
         canvas: canvas.current.toJSON(),
       };
+    }
   }
   function documentState() {
     capture();
@@ -124,34 +137,22 @@ export default function Editor({
   function record() {
     if (loading.current || readOnly) return;
     const state = documentState();
-    if (history.current[historyIndex.current] !== state) {
-      history.current = history.current.slice(0, historyIndex.current + 1);
-      history.current.push(state);
-      if (history.current.length > 80) history.current.shift();
-      historyIndex.current = history.current.length - 1;
-      setHistoryTick((x) => x + 1);
-    }
-    dirty.current = true;
-    setStatus("Есть изменения");
+    const snapshot = JSON.parse(state);
+    snapshot.title =
+      snapshot.title.trim() || live.current?.view.title || "Новый дизайн";
+    live.current?.publish(snapshot);
+    dirty.current = live.current?.pending || false;
+    setHistoryTick((x) => x + 1);
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => void saveRef.current(), 1000);
     setTick((x) => x + 1);
   }
   changeRef.current = record;
   async function save() {
-    if (readOnly || !dirty.current || conflict.current) return;
-    if (savePromise.current) {
-      await savePromise.current;
-      if (dirty.current) return save();
-      return;
-    }
+    if (readOnly) return;
     capture();
-    const doc = clone({ pages: pagesRef.current });
-    const savedTitle = titleRef.current;
-    dirty.current = false;
-    setStatus("Сохраняем…");
-    const c = canvas.current;
     let thumbnail: string | undefined;
+    const c = canvas.current;
     try {
       thumbnail = c?.toDataURL({
         format: "png",
@@ -160,32 +161,25 @@ export default function Editor({
           (c.getZoom() || 1),
       });
     } catch {}
-    savePromise.current = (async () => {
-      try {
-        const d = await api(
-          "/projects/" + project.id,
-          json(
-            {
-              revision: revision.current,
-              title: savedTitle,
-              document: doc,
-              ...(thumbnail ? { thumbnail } : {}),
-            },
-            "PUT",
-          ),
-        );
-        revision.current = d.revision;
-        setStatus(dirty.current ? "Есть изменения" : "Сохранено");
-      } catch (e) {
-        dirty.current = true;
-        if ((e as Error).message.includes("другой вкладке"))
-          conflict.current = true;
-        setStatus("Ошибка сохранения");
-        toast((e as Error).message);
-      }
-    })();
-    await savePromise.current;
-    savePromise.current = null;
+    try {
+      live.current?.publish(
+        {
+          title:
+            titleRef.current.trim() ||
+            live.current?.view.title ||
+            "Новый дизайн",
+          pages: clone(pagesRef.current),
+        },
+        thumbnail,
+      );
+      await live.current?.flush();
+      dirty.current = live.current?.pending || false;
+      revision.current = live.current?.revision || revision.current;
+    } catch (e) {
+      dirty.current = true;
+      setStatus("Ошибка сохранения");
+      toast((e as Error).message);
+    }
   }
   saveRef.current = save;
   async function loadPage(index: number) {
@@ -197,7 +191,7 @@ export default function Editor({
     try {
       await c.loadFromJSON(pagesRef.current[index].canvas);
       for (const o of c.getObjects())
-        o.set({ selectable: !readOnly, evented: !readOnly });
+        o.set({ selectable: editable.current, evented: editable.current });
       c.requestRenderAll();
     } finally {
       loading.current = false;
@@ -211,8 +205,78 @@ export default function Editor({
     setPage(index);
     await loadPage(index);
   }
+  drainRef.current = () => {
+    if (remoteTimer.current) clearTimeout(remoteTimer.current);
+    const run = async () => {
+      const c = canvas.current;
+      if (!c || disposed.current || !pendingRemote.current) return;
+      if (
+        loading.current ||
+        dragging.current ||
+        (c.getActiveObject() as any)?.isEditing
+      ) {
+        remoteTimer.current = setTimeout(() => void run(), 60);
+        return;
+      }
+      const state = live.current?.snapshot || pendingRemote.current;
+      pendingRemote.current = null;
+      const currentPageId = pagesRef.current[pageIndex.current]?.id;
+      const currentId = (c.getActiveObject() as any)?.id;
+      const oldCanvas = JSON.stringify(
+        pagesRef.current[pageIndex.current]?.canvas,
+      );
+      pagesRef.current = clone(state.pages);
+      titleRef.current = state.title;
+      setTitle(state.title);
+      setPages([...state.pages]);
+      const next = state.pages.findIndex((p) => p.id === currentPageId);
+      pageIndex.current = next >= 0 ? next : 0;
+      setPage(pageIndex.current);
+      try {
+        if (
+          oldCanvas !== JSON.stringify(state.pages[pageIndex.current]?.canvas)
+        ) {
+          setApplying(true);
+          await loadPage(pageIndex.current);
+          const object = c
+            .getObjects()
+            .find((o) => (o as any).id === currentId);
+          if (object) {
+            c.setActiveObject(object);
+            setSelected(object);
+            c.requestRenderAll();
+          }
+        }
+        capture();
+        live.current?.markDisplayed({
+          title: titleRef.current,
+          pages: pagesRef.current,
+        });
+        setLiveReady(true);
+        setHistoryTick((x) => x + 1);
+        setTick((x) => x + 1);
+      } catch {
+        toast("Не удалось отобразить совместное изменение");
+      } finally {
+        setApplying(false);
+      }
+      if (pendingRemote.current)
+        remoteTimer.current = setTimeout(() => void run(), 0);
+    };
+    void run();
+  };
+  useEffect(() => {
+    const c = canvas.current;
+    if (c) {
+      c.selection = !readOnly;
+      for (const o of c.getObjects())
+        o.set({ selectable: !readOnly, evented: !readOnly });
+      c.requestRenderAll();
+    }
+  }, [readOnly]);
   useEffect(() => {
     disposed.current = false;
+    let cancelled = false;
     const c = new Canvas(canvasEl.current!, {
       preserveObjectStacking: true,
       selection: !readOnly,
@@ -239,6 +303,27 @@ export default function Editor({
     c.on("selection:cleared", select);
     c.on("object:modified", () => changeRef.current());
     c.on("text:changed", () => changeRef.current());
+    c.on("mouse:down", () => {
+      dragging.current = true;
+    });
+    c.on("mouse:up", () => {
+      dragging.current = false;
+      if (pendingRemote.current) drainRef.current();
+    });
+    let lastCursor = 0;
+    c.on("mouse:move", (event) => {
+      if (Date.now() - lastCursor < 70) return;
+      lastCursor = Date.now();
+      const point = event.scenePoint;
+      live.current?.cursor({
+        x: Math.round(point.x),
+        y: Math.round(point.y),
+        page: pagesRef.current[pageIndex.current]?.id,
+      });
+    });
+    c.on("text:editing:exited", () => {
+      if (pendingRemote.current) drainRef.current();
+    });
     c.on("object:moving", ({ target }) => {
       if (snapRef.current && target) {
         target.set({
@@ -249,14 +334,29 @@ export default function Editor({
     });
     loading.current = true;
     c.loadFromJSON(pagesRef.current[0].canvas).then(() => {
-      if (disposed.current) return;
+      if (cancelled) return;
       for (const o of c.getObjects())
-        o.set({ selectable: !readOnly, evented: !readOnly });
+        o.set({ selectable: editable.current, evented: editable.current });
       c.requestRenderAll();
       loading.current = false;
-      history.current = [documentState()];
-      historyIndex.current = 0;
-      setHistoryTick((x) => x + 1);
+      live.current = new Collaboration({
+        projectId: project.id,
+        onSnapshot: (state) => {
+          pendingRemote.current = state;
+          drainRef.current();
+        },
+        onStatus: (state) => {
+          dirty.current = live.current?.pending || false;
+          setStatus(state);
+        },
+        onPeers: (people, id) => {
+          setPeers(people);
+          setSelf(id);
+        },
+        onRole: (role) => setLiveRole(role),
+        onError: toast,
+        onHistory: () => setHistoryTick((x) => x + 1),
+      });
     });
     const unload = (e: BeforeUnloadEvent) => {
       if (dirty.current) {
@@ -266,7 +366,11 @@ export default function Editor({
     };
     window.addEventListener("beforeunload", unload);
     return () => {
+      cancelled = true;
       disposed.current = true;
+      live.current?.destroy();
+      live.current = null;
+      if (remoteTimer.current) clearTimeout(remoteTimer.current);
       window.removeEventListener("beforeunload", unload);
       if (saveTimer.current) clearTimeout(saveTimer.current);
       void c.dispose();
@@ -288,22 +392,13 @@ export default function Editor({
   }, []);
   async function undo(direction: number) {
     if (readOnly || loading.current) return;
-    const next = historyIndex.current + direction;
-    if (next < 0 || next >= history.current.length) return;
-    const state = JSON.parse(history.current[next]);
-    historyIndex.current = next;
-    pagesRef.current = state.pages;
-    setPages([...state.pages]);
-    titleRef.current = state.title;
-    setTitle(state.title);
-    pageIndex.current = Math.min(pageIndex.current, state.pages.length - 1);
-    setPage(pageIndex.current);
-    await loadPage(pageIndex.current);
-    dirty.current = true;
-    setStatus("Есть изменения");
+    live.current?.undo(direction);
     setHistoryTick((x) => x + 1);
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => void saveRef.current(), 1000);
+    dirty.current = live.current?.pending || false;
+  }
+  function renewIds(object: FabricObject) {
+    (object as any).id = uid();
+    if ("getObjects" in object) (object as any).getObjects().forEach(renewIds);
   }
   function add(o: FabricObject) {
     if (readOnly || !canvas.current) return;
@@ -383,6 +478,7 @@ export default function Editor({
     if (readOnly || !c?.getActiveObject()) return;
     const original = c.getActiveObject()!;
     const copied = await original.clone();
+    renewIds(copied);
     if (copied instanceof ActiveSelection) {
       copied.canvas = c;
       copied.set({ left: copied.left + 20, top: copied.top + 20 });
@@ -444,6 +540,7 @@ export default function Editor({
   async function paste() {
     if (readOnly || !canvas.current || !clipboard.current) return;
     const o = await clipboard.current.clone();
+    renewIds(o);
     o.set({ left: o.left + 20, top: o.top + 20 });
     if (o instanceof ActiveSelection) {
       o.canvas = canvas.current;
@@ -624,16 +721,14 @@ export default function Editor({
       await temp.loadFromJSON(doc.pages[0].canvas);
       const sx = project.width / t.w,
         sy = project.height / t.h;
-      temp
-        .getObjects()
-        .forEach((o) =>
-          o.set({
-            left: o.left * sx,
-            top: o.top * sy,
-            scaleX: o.scaleX * sx,
-            scaleY: o.scaleY * sy,
-          }),
-        );
+      temp.getObjects().forEach((o) =>
+        o.set({
+          left: o.left * sx,
+          top: o.top * sy,
+          scaleX: o.scaleX * sx,
+          scaleY: o.scaleY * sy,
+        }),
+      );
       pagesRef.current[pageIndex.current].canvas = temp.toJSON();
       await loadPage(pageIndex.current);
       record();
@@ -821,7 +916,7 @@ export default function Editor({
             className="icon-button"
             title="Отменить Ctrl+Z"
             aria-label="Отменить"
-            disabled={readOnly || historyIndex.current <= 0}
+            disabled={readOnly || !live.current?.canUndo}
             onClick={() => undo(-1)}
           >
             <Undo2 size={19} />
@@ -830,9 +925,7 @@ export default function Editor({
             className="icon-button"
             title="Повторить Ctrl+Shift+Z"
             aria-label="Повторить"
-            disabled={
-              readOnly || historyIndex.current >= history.current.length - 1
-            }
+            disabled={readOnly || !live.current?.canRedo}
             onClick={() => undo(1)}
           >
             <Redo2 size={19} />
@@ -849,6 +942,20 @@ export default function Editor({
           <span>{readOnly ? "Только просмотр" : status}</span>
         </button>
         <div className="editor-header-spacer" />
+        <div className="live-presence" aria-label="Участники онлайн">
+          {peers.slice(0, 4).map((peer, i) => (
+            <span
+              key={peer.id}
+              title={peer.name + (peer.id === self ? " (вы)" : "")}
+              style={{
+                background: ["#eadffa", "#d8efe7", "#fce5d5", "#dde8fc"][i % 4],
+              }}
+            >
+              {peer.name[0].toUpperCase()}
+            </span>
+          ))}
+          <small>{peers.length ? peers.length + " онлайн" : "Нет связи"}</small>
+        </div>
         <button
           className="icon-button"
           title="История версий"
@@ -1422,6 +1529,29 @@ export default function Editor({
               </div>
               <div className="canvas-frame">
                 <canvas ref={canvasEl} />
+                <div className="remote-cursors" aria-hidden="true">
+                  {peers
+                    .filter(
+                      (peer) =>
+                        peer.id !== self &&
+                        peer.cursor?.page === pagesRef.current[page]?.id,
+                    )
+                    .map((peer, i) => (
+                      <span
+                        className="remote-cursor"
+                        key={peer.id}
+                        style={{
+                          left: (peer.cursor?.x || 0) * zoom,
+                          top: (peer.cursor?.y || 0) * zoom,
+                          color: ["#a562cf", "#39a689", "#d77b4c", "#538acf"][
+                            i % 4
+                          ],
+                        }}
+                      >
+                        ➤<b>{peer.name}</b>
+                      </span>
+                    ))}
+                </div>
               </div>
               <button
                 className="add-page"
@@ -1740,9 +1870,10 @@ export default function Editor({
                 ))}
               </div>
               <p className="tip">
-                Совместный доступ с защитой от перезаписи. Для получения чужих
-                изменений обновите страницу. Синхронное редактирование в
-                реальном времени пока не реализовано.
+                Изменения появляются у участников в реальном времени. Undo
+                отменяет только ваши действия. Один текстовый блок
+                синхронизируется целиком; посимвольное совместное редактирование
+                пока не поддерживается.
               </p>
             </>
           )}

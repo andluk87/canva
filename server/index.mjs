@@ -1,4 +1,6 @@
 import express from "express";
+import { createServer } from "node:http";
+import { createRealtime } from "./realtime.mjs";
 import { DatabaseSync } from "node:sqlite";
 import {
   randomBytes,
@@ -105,7 +107,7 @@ export function createApp({
   app.get("/api/health", (_, res) =>
     res.json({
       status: "ok",
-      version: "0.1.0",
+      version: "0.2.0",
       database: !!db.prepare("SELECT 1").get(),
     }),
   );
@@ -171,6 +173,7 @@ export function createApp({
       .find((s) => s.startsWith("forma_session="))
       ?.slice(14);
     if (token) db.prepare("DELETE FROM sessions WHERE token=?").run(sha(token));
+    realtime.refreshAccess();
     res.clearCookie("forma_session", { path: "/" }).json({ ok: true });
   });
   app.get("/api/auth/me", auth, (req, res) =>
@@ -238,20 +241,34 @@ export function createApp({
     return (
       d &&
       Array.isArray(d.pages) &&
+      new Set(d.pages.map((p) => p?.id)).size === d.pages.length &&
       d.pages.length > 0 &&
       d.pages.length <= 100 &&
       d.pages.every(
         (p) =>
           p &&
           typeof p.id === "string" &&
+          p.id.length > 0 &&
+          p.id.length <= 128 &&
           p.canvas &&
           typeof p.canvas === "object" &&
           Array.isArray(p.canvas.objects) &&
-          p.canvas.objects.length <= 2000,
+          p.canvas.objects.length <= 2000 &&
+          p.canvas.objects.every(
+            (o) =>
+              o &&
+              typeof o === "object" &&
+              !Array.isArray(o) &&
+              typeof o.type === "string" &&
+              (!o.id || (typeof o.id === "string" && o.id.length <= 128)),
+          ) &&
+          new Set(p.canvas.objects.filter((o) => o.id).map((o) => o.id))
+            .size === p.canvas.objects.filter((o) => o.id).length,
       ) &&
       Buffer.byteLength(JSON.stringify(d)) < 15000000
     );
   }
+  const realtime = createRealtime(db, validDocument);
   app.get("/api/projects", auth, (req, res) => {
     const ps = db
       .prepare(
@@ -309,15 +326,13 @@ export function createApp({
       t,
       t,
     );
-    res
-      .status(201)
-      .json({
-        project: {
-          ...db.prepare("SELECT * FROM projects WHERE id=?").get(pid),
-          document,
-          role: "owner",
-        },
-      });
+    res.status(201).json({
+      project: {
+        ...db.prepare("SELECT * FROM projects WHERE id=?").get(pid),
+        document,
+        role: "owner",
+      },
+    });
   });
   app.get("/api/projects/:id", auth, access, (req, res) =>
     res.json({
@@ -390,10 +405,12 @@ export function createApp({
       db.exec("ROLLBACK");
       throw e;
     }
+    realtime.restChanged(p.id, b);
     res.json({ revision: p.revision + 1 });
   });
   app.delete("/api/projects/:id", auth, access, owner, (req, res) => {
     db.prepare("DELETE FROM projects WHERE id=?").run(req.project.id);
+    realtime.refreshAccess(req.project.id);
     res.json({ ok: true });
   });
   app.get("/api/projects/:id/versions", auth, access, (req, res) =>
@@ -434,6 +451,7 @@ export function createApp({
     db.prepare(
       "INSERT INTO members VALUES(?,?,?) ON CONFLICT(project_id,user_id) DO UPDATE SET role=excluded.role",
     ).run(req.project.id, u.id, role);
+    realtime.refreshAccess(req.project.id);
     res.json({ ok: true });
   });
   app.delete(
@@ -446,6 +464,7 @@ export function createApp({
         req.project.id,
         req.params.user,
       );
+      realtime.refreshAccess(req.project.id);
       res.json({ ok: true });
     },
   );
@@ -501,15 +520,13 @@ export function createApp({
           file,
           now(),
         );
-        res
-          .status(201)
-          .json({
-            asset: {
-              id: aid,
-              name: req.file.originalname,
-              url: "/api/assets/" + aid + "/file",
-            },
-          });
+        res.status(201).json({
+          asset: {
+            id: aid,
+            name: req.file.originalname,
+            url: "/api/assets/" + aid + "/file",
+          },
+        });
       } catch (e) {
         if (/Input|unsupported|pixel|corrupt/i.test(String(e)))
           return err(
@@ -555,11 +572,18 @@ export function createApp({
         : "Ошибка сервера",
     );
   });
-  return { app, db };
+  return { app, db, realtime };
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const { app } = createApp();
-  app.listen(Number(process.env.PORT || 8192), "0.0.0.0", () =>
+  const { app, realtime } = createApp();
+  const server = createServer(app);
+  realtime.attach(server);
+  server.on("error", (error) => {
+    console.error("Forma startup failed:", error.code);
+    realtime.close();
+    process.exitCode = 1;
+  });
+  server.listen(Number(process.env.PORT || 8192), "0.0.0.0", () =>
     console.log("Forma listening on port " + (process.env.PORT || 8192)),
   );
 }

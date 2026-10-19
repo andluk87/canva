@@ -7,7 +7,8 @@ RUN --mount=type=secret,id=cloud_ca,required=false \
     npm ci --no-audit --no-fund --fetch-retries=0 --fetch-timeout=30000
 COPY index.html tsconfig.json vite.config.ts ./
 COPY src ./src
-RUN npm run build && npm prune --omit=dev --ignore-scripts
+COPY shared ./shared
+RUN npm run build && npm prune --offline --omit=dev --ignore-scripts
 
 FROM node:24-bookworm-slim AS runtime
 ENV NODE_ENV=production PORT=8192 DATA_DIR=/app/data
@@ -16,6 +17,7 @@ COPY --chown=node:node --from=build /app/node_modules ./node_modules
 COPY --chown=node:node --from=build /app/dist ./dist
 COPY --chown=node:node package.json ./
 COPY --chown=node:node server ./server
+COPY --chown=node:node shared ./shared
 RUN mkdir -p /app/data && chown node:node /app/data
 USER node
 EXPOSE 8192
