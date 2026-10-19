@@ -1,0 +1,263 @@
+openapi: 3.1.0
+info:
+  title: Forma Core API
+  version: 0.1.0
+  description: Session-cookie API. Project writes require matching revision; conflicts return 409. See README for scope limitations.
+servers:
+  - url: /api
+security:
+  - session: []
+components:
+  securitySchemes:
+    session:
+      type: apiKey
+      in: cookie
+      name: forma_session
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+    Credentials:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 10, maxLength: 256 }
+        name: { type: string, maxLength: 100 }
+    Document:
+      type: object
+      required: [pages]
+      properties:
+        pages:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            type: object
+            required: [id, canvas]
+            properties:
+              id: { type: string }
+              canvas:
+                type: object
+                required: [objects]
+                properties:
+                  objects:
+                    { type: array, maxItems: 2000, items: { type: object } }
+                  background: { type: string }
+    ProjectInput:
+      type: object
+      properties:
+        title: { type: string, minLength: 1, maxLength: 200 }
+        kind: { type: string, maxLength: 40 }
+        width: { type: integer, minimum: 100, maximum: 6000, default: 1080 }
+        height: { type: integer, minimum: 100, maximum: 6000, default: 1080 }
+        document: { $ref: "#/components/schemas/Document" }
+    ProjectUpdate:
+      type: object
+      required: [revision]
+      properties:
+        revision: { type: integer }
+        title: { type: string, minLength: 1, maxLength: 200 }
+        document: { $ref: "#/components/schemas/Document" }
+        thumbnail:
+          { type: string, description: "PNG data URI, up to 400000 characters" }
+        folder: { type: string, maxLength: 100 }
+        favorite: { type: boolean }
+        deleted: { type: boolean }
+  parameters:
+    projectId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+paths:
+  /health:
+    get:
+      security: []
+      responses:
+        "200": { description: API and database ready }
+  /auth/register:
+    post:
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Credentials" }
+      responses:
+        "200": { description: User created and session cookie issued }
+        "400": { description: Invalid fields }
+        "409": { description: Email already registered }
+        "429": { description: Rate limit }
+  /auth/login:
+    post:
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Credentials" }
+      responses:
+        "200": { description: Session cookie issued }
+        "401": { description: Invalid credentials }
+        "429": { description: Rate limit }
+  /auth/me:
+    get:
+      responses:
+        "200": { description: User profile and brand }
+        "401": { description: Login required }
+  /auth/logout:
+    post:
+      responses:
+        "200": { description: Current session revoked }
+  /brand:
+    put:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, colors, font]
+              properties:
+                name: { type: string, maxLength: 100 }
+                colors:
+                  {
+                    type: array,
+                    maxItems: 10,
+                    items: { type: string, pattern: "^#[0-9a-fA-F]{6}$" },
+                  }
+                font: { type: string, maxLength: 100 }
+      responses:
+        "200": { description: Brand saved }
+        "400": { description: Invalid palette }
+  /projects:
+    get:
+      responses:
+        "200":
+          { description: Accessible project summaries including trash and role }
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProjectInput" }
+      responses:
+        "201": { description: Project created }
+        "400": { description: Invalid input }
+  /projects/{id}:
+    parameters:
+      - { $ref: "#/components/parameters/projectId" }
+    get:
+      responses:
+        "200": { description: Full document and current revision }
+        "404": { description: Absent or inaccessible project }
+    put:
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProjectUpdate" }
+      responses:
+        "200": { description: New revision }
+        "400": { description: Invalid document }
+        "403": { description: Insufficient role }
+        "409": { description: Revision conflict }
+    delete:
+      responses:
+        "200": { description: Permanently deleted by owner }
+        "403": { description: Owner required }
+  /projects/{id}/members:
+    parameters:
+      - { $ref: "#/components/parameters/projectId" }
+    get:
+      responses:
+        "200": { description: Registered members and roles }
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, role]
+              properties:
+                email: { type: string, format: email }
+                role: { type: string, enum: [viewer, editor] }
+      responses:
+        "200": { description: Owner granted or changed access }
+        "403": { description: Owner required }
+        "404": { description: User must register first }
+  /projects/{id}/members/{user}:
+    parameters:
+      - { $ref: "#/components/parameters/projectId" }
+      - { name: user, in: path, required: true, schema: { type: string } }
+    delete:
+      responses:
+        "200": { description: Access revoked }
+        "403": { description: Owner required }
+  /projects/{id}/versions:
+    parameters:
+      - { $ref: "#/components/parameters/projectId" }
+    get:
+      responses:
+        "200": { description: Last 30 version summaries }
+  /projects/{id}/versions/{version}:
+    parameters:
+      - { $ref: "#/components/parameters/projectId" }
+      - { name: version, in: path, required: true, schema: { type: string } }
+    get:
+      responses:
+        "200":
+          {
+            description: Prior document and title; restore using PUT project with current revision,
+          }
+        "404": { description: Version absent }
+  /projects/{id}/comments:
+    parameters:
+      - { $ref: "#/components/parameters/projectId" }
+    get:
+      responses:
+        "200": { description: Comments ordered by time }
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body: { type: string, minLength: 1, maxLength: 2000 }
+      responses:
+        "201": { description: Comment saved }
+        "403": { description: Editor or owner required }
+  /assets:
+    get:
+      responses:
+        "200": { description: Current user's image library }
+    post:
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  {
+                    type: string,
+                    format: binary,
+                    description: "PNG/JPG/WebP up to 10 MB and 25 MP",
+                  }
+      responses:
+        "201": { description: Decoded and normalized PNG stored }
+        "400": { description: Invalid or oversized image }
+  /assets/{asset}/file:
+    parameters:
+      - { name: asset, in: path, required: true, schema: { type: string } }
+    get:
+      responses:
+        "200":
+          {
+            description: Owner's normalized PNG,
+            content:
+              { image/png: { schema: { type: string, format: binary } } },
+          }
+        "404": { description: Absent or inaccessible asset }
