@@ -1,0 +1,26 @@
+services:
+  forma:
+    build: .
+    image: forma-studio:local
+    ports:
+      - "${FORMA_PORT:-8192}:8192"
+    volumes:
+      - forma_data:/app/data
+    environment:
+      NODE_ENV: production
+      PORT: 8192
+      DATA_DIR: /app/data
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+    restart: unless-stopped
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+volumes:
+  forma_data:

@@ -1,0 +1,4 @@
+import {X} from 'lucide-react';
+import type {Template} from './templates';
+export function Modal({title,children,onClose}:{title:string;children:React.ReactNode;onClose:()=>void}){return <div className="modal-shade" onMouseDown={e=>e.target===e.currentTarget&&onClose()}><section className="modal" role="dialog" aria-modal="true" aria-label={title}><header><h2>{title}</h2><button className="icon-button" onClick={onClose} aria-label="Закрыть"><X size={20}/></button></header>{children}</section></div>}
+export function Artwork({t}:{t:Template}){return <div className={'artwork '+t.style} style={{background:t.bg,color:t.ink}}><div className="art-orbit" style={{background:t.accent}}/><small>FORMA / DESIGN STORIES</small><strong>{t.headline.split('\n').map((s,i)=><span key={i}>{s}<br/></span>)}</strong><p>{t.sub}</p><span className="art-mark">✳</span></div>}
