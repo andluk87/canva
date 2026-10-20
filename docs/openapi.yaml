@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Forma Core API
-  version: 0.5.0
+  version: 0.6.0
   description: >-
     Session-cookie API. Project writes require matching revision; conflicts return 409.
     Mutating requests with an Origin header must match the request host or return 403.
@@ -258,6 +258,164 @@ components:
             thumbnail: { type: [string, "null"] }
             created: { type: string, format: date-time }
             updated: { type: string, format: date-time }
+    BrandTypography:
+      type: object
+      required:
+      - headingSize
+      - bodySize
+      - headingWeight
+      - bodyWeight
+      - lineHeight
+      properties:
+        headingSize:
+          type: integer
+          minimum: 8
+          maximum: 200
+        bodySize:
+          type: integer
+          minimum: 8
+          maximum: 200
+        headingWeight:
+          type: string
+          enum:
+          - normal
+          - bold
+        bodyWeight:
+          type: string
+          enum:
+          - normal
+          - bold
+        lineHeight:
+          type: number
+          minimum: 0.8
+          maximum: 2.5
+    BrandInput:
+      type: object
+      required:
+      - name
+      - colors
+      - font
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        colors:
+          type: array
+          minItems: 1
+          maxItems: 10
+          items:
+            type: string
+            pattern: ^#[0-9a-fA-F]{6}$
+        font:
+          type: string
+          enum:
+          - Arial
+          - Georgia
+          - Verdana
+          - Courier New
+          - Times New Roman
+        typography:
+          $ref: '#/components/schemas/BrandTypography'
+    BrandLogo:
+      type: object
+      required:
+      - id
+      - name
+      - src
+      - width
+      - height
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+          maxLength: 150
+        src:
+          type: string
+          description: Self-contained normalized PNG data URL. Raw PNG is at most 1 MiB.
+        width:
+          type: integer
+          minimum: 1
+          maximum: 1200
+        height:
+          type: integer
+          minimum: 1
+          maximum: 1200
+    BrandKit:
+      allOf:
+      - $ref: '#/components/schemas/BrandInput'
+      - type: object
+        required:
+        - id
+        - typography
+        - logos
+        - revision
+        - created
+        - updated
+        properties:
+          id:
+            type: string
+          logos:
+            type: array
+            maxItems: 10
+            items:
+              $ref: '#/components/schemas/BrandLogo'
+          revision:
+            type: integer
+            minimum: 1
+          created:
+            type: string
+            format: date-time
+          updated:
+            type: string
+            format: date-time
+    BrandSummary:
+      type: object
+      required:
+      - id
+      - name
+      - colors
+      - font
+      - logoCount
+      - revision
+      - updated
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        colors:
+          type: array
+          items:
+            type: string
+        font:
+          type: string
+        logoCount:
+          type: integer
+          minimum: 0
+          maximum: 10
+        revision:
+          type: integer
+          minimum: 1
+        updated:
+          type: string
+          format: date-time
+    BrandKitResponse:
+      type: object
+      required:
+      - kit
+      properties:
+        kit:
+          $ref: '#/components/schemas/BrandKit'
+    RevisionInput:
+      type: object
+      required:
+      - revision
+      properties:
+        revision:
+          type: integer
+          minimum: 1
     BulkInput:
       type: object
       required: [csv]
@@ -1281,3 +1439,193 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+
+  /brand-kits:
+    get:
+      summary: List private brand summaries without logo payloads.
+      responses:
+        '200':
+          description: No-store summaries, usage and limits.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  kits:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/BrandSummary'
+                  usage:
+                    type: object
+                    properties:
+                      count:
+                        type: integer
+                      storageBytes:
+                        type: integer
+                  limits:
+                    type: object
+        '401': &id001
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      summary: Create a private brand.
+      description: Up to 20 kits and 30 MiB of serialized settings/logo data per user. Typography defaults to 48/24
+        px, bold/normal and lineHeight 1.2 when omitted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BrandInput'
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrandKitResponse'
+        '400': &id003
+          description: Invalid settings, revision or image.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401': *id001
+        '409': &id004
+          description: Stale revision or library quota exceeded. Refresh before retrying.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /brand-kits/{id}:
+    parameters: &id005
+    - &id007
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    get:
+      summary: Read a private brand with normalized embedded logos.
+      responses:
+        '200':
+          description: No-store brand.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrandKitResponse'
+        '401': *id001
+        '404': &id002
+          $ref: '#/components/responses/NotFound'
+    put:
+      summary: Replace settings with optimistic revision; retain logos.
+      description: Updates the account palette too when this kit is active. Existing design documents stay independent.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+              - $ref: '#/components/schemas/BrandInput'
+              - $ref: '#/components/schemas/RevisionInput'
+      responses:
+        '200':
+          description: Updated; revision increments.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrandKitResponse'
+        '401': *id001
+        '404': *id002
+        '400': *id003
+        '409': *id004
+    delete:
+      summary: Delete kit and logos while preserving existing designs and last active palette.
+      requestBody: &id006
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RevisionInput'
+      responses:
+        '200':
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ok'
+        '401': *id001
+        '404': *id002
+        '400': *id003
+        '409': *id004
+  /brand-kits/{id}/activate:
+    parameters: *id005
+    post:
+      summary: Select this kit as the account default.
+      requestBody: *id006
+      responses:
+        '200':
+          description: Updated user preferences.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '401': *id001
+        '404': *id002
+        '400': *id003
+        '409': *id004
+  /brand-kits/{id}/logos:
+    parameters: *id005
+    post:
+      summary: Upload and normalize one private logo.
+      description: PNG/JPEG/WebP only, no animation or SVG. At most 10 MiB input, 25 million decoded pixels, 1200
+        px output edge, 1 MiB PNG output and 10 logos per kit. Metadata is removed. Ownership is checked before decoding;
+        revision and quotas are rechecked after asynchronous work.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+              - revision
+              - file
+              properties:
+                revision:
+                  type: integer
+                  minimum: 1
+                file:
+                  type: string
+                  format: binary
+      responses:
+        '201':
+          description: Logo added; updated kit/revision.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrandKitResponse'
+        '401': *id001
+        '404': *id002
+        '400': *id003
+        '409': *id004
+  /brand-kits/{id}/logos/{logoId}:
+    parameters:
+    - *id007
+    - name: logoId
+      in: path
+      required: true
+      schema:
+        type: string
+    delete:
+      summary: Remove one logo from the private kit.
+      requestBody: *id006
+      responses:
+        '200':
+          description: Updated kit/revision.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BrandKitResponse'
+        '401': *id001
+        '404': *id002
+        '400': *id003
+        '409': *id004

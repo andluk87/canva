@@ -1,6 +1,7 @@
 import express from "express";
 import { createServer } from "node:http";
 import { createRealtime } from "./realtime.mjs";
+import {registerBrandKits} from "./brand-kits.mjs";
 import {registerBulk} from "./bulk.mjs";
 import {registerPublications} from "./publications.mjs";
 import {registerAccounts} from "./accounts.mjs";
@@ -111,7 +112,7 @@ export function createApp({
   app.get("/api/health", (_, res) =>
     res.json({
       status: "ok",
-      version: "0.5.0",
+      version: "0.6.0",
       database: !!db.prepare("SELECT 1").get(),
     }),
   );
@@ -277,6 +278,7 @@ export function createApp({
   }
   const realtime = createRealtime(db, validDocument);
   const accounts=registerAccounts(app,{db,auth,realtime,safeUser});
+  registerBrandKits(app,{db,auth,safeUser});
   registerBulk(app,{db,auth,access,write,validDocument});
   registerPublications(app,{db,auth,access,owner,validDocument});
   registerPersonalTemplates(app,{db,auth,access,validDocument});

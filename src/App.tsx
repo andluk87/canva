@@ -29,6 +29,7 @@ import { api, json, Project, User } from "./api";
 import { formats, templates, Template, templateDocument } from "./templates";
 const Editor = lazy(() => import("./Editor"));
 import { Modal, Artwork } from "./ui";
+import BrandLibrary from './brand/BrandLibrary';
 import AccountSettings from './AccountSettings';
 import PersonalTemplates from './PersonalTemplates';
 import {clearUserData} from './offline/store.mjs';
@@ -57,9 +58,6 @@ export default function App() {
   function acceptUser(next:User|null){if(identity.current.id!==next?.id){identity.current={id:next?.id||null,generation:identity.current.generation+1};navigation.current++;}setUser(next);}
   const current=(ticket:typeof identity.current)=>identity.current===ticket;
   const publicToken=new URLSearchParams(location.search).get("view");
-  const [brandName, setBrandName] = useState("Мой бренд"),
-    [brandColors, setBrandColors] = useState(["#7048ed", "#1e2433", "#f7f5ff"]),
-    [brandFont, setBrandFont] = useState("Arial");
   const toast = (s: string) => {
     setNotice(s);
     setTimeout(() => setNotice(""), 4500);
@@ -87,9 +85,6 @@ export default function App() {
   useEffect(() => {
     if (user) {
       reload();
-      setBrandName(user.brand.name || "Мой бренд");
-      setBrandColors(user.brand.colors || ["#7048ed", "#1e2433", "#f7f5ff"]);
-      setBrandFont(user.brand.font || "Arial");
       const p = new URLSearchParams(location.search).get("project");
       if (p) open(p);
     } else setProjects([]);
@@ -806,115 +801,7 @@ export default function App() {
               </div>
             </section>
           )}
-          {section === "Бренд" && (
-            <section className="brand-section">
-              <span className="section-kicker">ВАШ УЗНАВАЕМЫЙ СТИЛЬ</span>
-              <h1>Один бренд. Тысячи идей.</h1>
-              <p className="muted">
-                Сохраните палитру и шрифт, чтобы применять их в редакторе.
-              </p>
-              <div className="brand-layout">
-                <form
-                  onSubmit={async (e) => {
-                    e.preventDefault();
-                    if (!requireUser()) return;
-                    try {
-                      await api(
-                        "/brand",
-                        json(
-                          {
-                            name: brandName,
-                            colors: brandColors,
-                            font: brandFont,
-                          },
-                          "PUT",
-                        ),
-                      );
-                      if(identity.current.id!==user!.id)return;
-                      const updated={
-                        ...user!,
-                        brand: {
-                          name: brandName,
-                          colors: brandColors,
-                          font: brandFont,
-                        },
-                      };
-                      rememberUser(updated);acceptUser(updated);
-                      toast("Бренд-набор сохранён");
-                    } catch (e) {
-                      toast((e as Error).message);
-                    }
-                  }}
-                >
-                  <label>
-                    Название бренда
-                    <input
-                      value={brandName}
-                      onChange={(e) => setBrandName(e.target.value)}
-                      maxLength={100}
-                      required
-                    />
-                  </label>
-                  <label>Фирменные цвета</label>
-                  <div className="brand-colors">
-                    {brandColors.map((c, i) => (
-                      <label key={i}>
-                        <input
-                          aria-label={"Цвет " + (i + 1)}
-                          type="color"
-                          value={c}
-                          onChange={(e) =>
-                            setBrandColors(
-                              brandColors.map((v, j) =>
-                                j === i ? e.target.value : v,
-                              ),
-                            )
-                          }
-                        />
-                        <small>{c}</small>
-                      </label>
-                    ))}
-                  </div>
-                  <label>
-                    Шрифт
-                    <select
-                      value={brandFont}
-                      onChange={(e) => setBrandFont(e.target.value)}
-                    >
-                      {[
-                        "Arial",
-                        "Georgia",
-                        "Verdana",
-                        "Courier New",
-                        "Times New Roman",
-                      ].map((f) => (
-                        <option key={f}>{f}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <button className="primary" type="submit">
-                    Сохранить бренд-набор
-                  </button>
-                </form>
-                <div
-                  className="brand-preview"
-                  style={{
-                    background: brandColors[2],
-                    color: brandColors[1],
-                    fontFamily: brandFont,
-                  }}
-                >
-                  <span style={{ color: brandColors[0] }}>✳︎</span>
-                  <h2>{brandName}</h2>
-                  <p>
-                    Ваш стиль.
-                    <br />
-                    Ваши правила.
-                  </p>
-                </div>
-              </div>
-            </section>
-          )}
+          {section === "Бренд" && (user?<BrandLibrary key={user.id} user={user} onUserChange={u=>{if(identity.current.id===u.id){rememberUser(u);acceptUser(u)}}} toast={toast}/>:<div className="empty-state"><h2>Войдите, чтобы сохранять бренды</h2><button className="primary" onClick={()=>setAuth(true)}>Войти</button></div>)}
           {section==='Мои шаблоны'&&(user?<PersonalTemplates key={user.id} onCreated={openCreated} toast={toast}/>:<div className="empty-state"><h2>Войдите, чтобы сохранять свои шаблоны</h2><button className="primary" onClick={()=>setAuth(true)}>Войти</button></div>)}
           {section==='Настройки' &&(user?<AccountSettings user={user} onUserChange={u=>{if(identity.current.id===u.id){rememberUser(u);acceptUser(u)}}} onLogout={()=>void localLogout()} toast={toast}/>:<div className="empty-state"><h2>Войдите в аккаунт</h2><button className="primary" onClick={()=>setAuth(true)}>Войти</button></div>)}
           {section === "Мои загрузки" && (

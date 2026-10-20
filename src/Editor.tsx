@@ -60,6 +60,9 @@ import AdvancedTools from './advanced/AdvancedTools';
 import ExportDialog from './export/ExportDialog';
 import ImageTools from './image-tools/ImageTools';
 import DataTools from './data-tools/DataTools';
+import BrandPanel from './brand/BrandPanel';
+import {brandObjectStyle,type BrandSettings} from '../shared/brand.mjs';
+import type {BrandLogo} from './brand/api';
 import PersonalTemplates from './PersonalTemplates';
 import SlideSettings from './presentation/SlideSettings';
 import PresentationViewer from './presentation/PresentationViewer';
@@ -653,6 +656,29 @@ export default function Editor({
     window.addEventListener("keydown", keyboard);
     return () => window.removeEventListener("keydown", keyboard);
   }, [readOnly]);
+  function applyBrand(brand:BrandSettings,options:{selection:boolean;typography:boolean;background:boolean}) {
+    const c=canvas.current;if(!c||readOnly)return;
+    const targets=options.selection?[...c.getActiveObjects()]:[...c.getObjects()];
+    c.discardActiveObject();let index=0;
+    function style(object:FabricObject){
+      const o=object as any;
+      if(o.formaData||(o.lockMovementX&&o.lockMovementY))return;
+      if(object instanceof FabricGroup){object.getObjects().forEach(style);object.set('dirty',true);if(options.typography)object.triggerLayout();object.setCoords();return;}
+      const patch=brandObjectStyle(o,brand,index++,options.typography);
+      if(patch){object.set(patch);object.setCoords();}
+    }
+    targets.forEach(style);
+    if(options.background)c.backgroundColor=brand.colors[2]||brand.colors[0];
+    c.requestRenderAll();record();toast('Бренд применён');
+  }
+  async function insertBrandLogo(logo:BrandLogo){
+    const c=canvas.current;if(!c||!editable.current)return;
+    const targetPage=pagesRef.current[pageIndex.current]?.id;
+    const image=await FabricImage.fromURL(logo.src);
+    if(disposed.current||canvas.current!==c||!editable.current||pagesRef.current[pageIndex.current]?.id!==targetPage)return;
+    image.scaleToWidth(Math.min(project.width*.35,logo.width));
+    image.set({left:project.width*.1,top:project.height*.1});add(image);
+  }
   async function addImage(url: string) {
     if (readOnly) return;
     try {
@@ -932,6 +958,7 @@ export default function Editor({
             { name: "Текст", icon: Type },
             { name: "Загрузки", icon: Image },
             { name: "Фон", icon: Palette },
+            { name: "Бренд", icon: Palette },
             { name: "Слои", icon: Layers },
             { name: "Инструменты", icon: SlidersHorizontal },
             { name: "Фото", icon: Image },
@@ -961,6 +988,7 @@ export default function Editor({
                 <X size={16} />
               </button>
             </div>
+            {tab==='Бренд'&&<BrandPanel user={user} readOnly={readOnly} hasSelection={!!c?.getActiveObjects().length} onApply={applyBrand} onLogo={insertBrandLogo}/>}
             {tab==='Инструменты'&&c&&<AdvancedTools canvas={c} selected={selected} readOnly={readOnly} onChange={record} toast={toast} width={project.width} height={project.height} tick={tick}/>}
             {tab==='Фото'&&c&&<ImageTools canvas={c} selected={selected} readOnly={readOnly} onChange={record} toast={toast} tick={tick}/>}
             {tab==='Данные'&&c&&<DataTools canvas={c} selected={selected} readOnly={readOnly} width={project.width} height={project.height} onChange={record} toast={toast} tick={tick}/>}

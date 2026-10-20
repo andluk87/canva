@@ -23,7 +23,7 @@ export type User = {
   id: string;
   name: string;
   email: string;
-  brand: { name?: string; colors?: string[]; font?: string };
+  brand: { name?: string; colors?: string[]; font?: string; kitId?:string; typography?:import("../shared/brand.mjs").BrandSettings["typography"] };
 };
 export type DesignPage = { id: string; canvas: any;notes?:string;transition?:'none'|'fade'|'slide' };
 export type Project = {
