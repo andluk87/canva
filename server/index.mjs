@@ -111,7 +111,7 @@ export function createApp({
   app.get("/api/health", (_, res) =>
     res.json({
       status: "ok",
-      version: "0.4.0",
+      version: "0.5.0",
       database: !!db.prepare("SELECT 1").get(),
     }),
   );

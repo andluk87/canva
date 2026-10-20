@@ -96,7 +96,7 @@ test('bulk API: validation failures create nothing, including a late invalid tit
     { csv: 'имя,город\nАнна' },
     { csv: 'имя,город\nАнна,Москва', titlePattern: '{{нет}}' },
     { csv: 'имя,город,название\nАнна,Москва,Good\nИван,Казань,', titlePattern: '{{название}}' },
-    { csv: 'имя,город\nАнна,Москва', mode: 'pages' },
+    { csv: 'имя,город\nАнна,Москва', mode: 'unknown' },
     { csv: 'имя,город\n' + Array(51).fill('Анна,Москва').join('\n') },
     { csv: null },
   ]) {
@@ -126,4 +126,12 @@ test('bulk API: replacements preserve unsafe-looking strings as literal data wit
   assert.equal(result.status, 201);
   assert.equal(result.data.projects[0].title, value);
   assert.equal(result.data.projects[0].document.pages[0].canvas.objects[0].text, 'Привет, ' + value);
+});
+
+test('bulk pages: rows concatenate all source pages with unique IDs and retain notes/styles',async()=>{
+ const doc={pages:[{id:'first',notes:'Speaker notes',transition:'fade',canvas:{objects:[{id:'text',type:'Textbox',text:'Hello {{name}}',fill:'#112233'}]}},{id:'second',canvas:{objects:[{id:'text',type:'Textbox',text:'City {{city}}'}]}}]};
+ const original=(await request('/projects',{method:'POST',body:{title:'Source pages',width:800,height:600,document:doc}})).data.project;const before=total();const result=await bulk(original.id,{mode:'pages',title:'Merged designs',csv:'name,city\nAlice,London\nBob,Paris'});assert.equal(result.status,201);assert.equal(result.data.count,1);assert.equal(result.data.mode,'pages');assert.equal(result.data.pageCount,4);assert.equal(total(),before+1);const combined=result.data.projects[0];assert.equal(combined.title,'Merged designs');assert.deepEqual(combined.document.pages.map(p=>p.canvas.objects[0].text),['Hello Alice','City London','Hello Bob','City Paris']);assert.equal(new Set(combined.document.pages.map(p=>p.id)).size,4);assert.equal(combined.document.pages.some(p=>['first','second'].includes(p.id)),false);assert.equal(combined.document.pages[2].notes,'Speaker notes');assert.equal(combined.document.pages[2].transition,'fade');assert.equal(combined.document.pages[2].canvas.objects[0].fill,'#112233');assert.deepEqual((await request('/projects/'+original.id)).data.project.document,doc);assert.equal((await request('/projects/'+combined.id+'/members')).data.members.length,0);
+});
+test('bulk pages: invalid output bounds and conflicting title options create no project',async()=>{
+ const doc={pages:Array.from({length:3},(_,i)=>({id:'page-'+i,canvas:{objects:[{type:'Textbox',text:'{{name}}'}]}}))};const source=(await request('/projects',{method:'POST',body:{title:'Page limit',width:400,height:300,document:doc}})).data.project;const before=total();for(const body of [{csv:'name\n'+Array(34).fill('Alice').join('\n')},{csv:'name\nAlice',title:''},{csv:'name\nAlice',title:42},{csv:'name\nAlice',title:'x'.repeat(201)},{csv:'name\nAlice',titlePattern:'{{name}}'}]){assert.equal((await bulk(source.id,{mode:'pages',...body})).status,400);assert.equal(total(),before)}assert.equal((await bulk(source.id,{mode:'pages',csv:'name\nAlice'},viewer)).status,404);
 });

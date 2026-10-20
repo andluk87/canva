@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Forma Core API
-  version: 0.4.0
+  version: 0.5.0
   description: >-
     Session-cookie API. Project writes require matching revision; conflicts return 409.
     Mutating requests with an Origin header must match the request host or return 403.
@@ -276,7 +276,18 @@ components:
           maxLength: 1000
           description: Optional title with {{column}} placeholders. Resolved names must contain 1–200 characters; default is source title followed by row number.
           examples: ["Certificate — {{name}}"]
-        mode: { type: string, enum: [projects], default: projects }
+        mode: { type: string, enum: [projects, pages], default: projects }
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Optional literal title of the single combined project in pages mode.
+      allOf:
+        - if:
+            required: [mode]
+            properties: { mode: { const: pages } }
+          then:
+            not: { required: [titlePattern] }
     PersonalTemplate:
       type: object
       required: [id, title, category, kind, width, height, thumbnail, pageCount, revision, created, updated]
@@ -866,14 +877,16 @@ paths:
     parameters:
       - { $ref: "#/components/parameters/projectId" }
     post:
-      summary: Create one personalized project per CSV data row from a saved source design.
+      summary: Create personalized projects or one combined multi-page project from CSV.
       description: >-
         Owner or editor required. Replaces {{column}} placeholders only in text properties,
         including nested groups, and in the optional titlePattern. Every referenced variable
         must have a CSV header. Preserves image URLs, styling, source project and page/object IDs
         within each separate copy. New projects belong to the calling user and inherit no
         members or publications. All rows are validated before a single atomic transaction;
-        combined serialized documents may not exceed 30000000 bytes.
+        combined serialized documents may not exceed 30000000 bytes. In pages mode, rows are
+        concatenated in CSV order, with all source pages per row and new page IDs. The single
+        combined project is limited to 100 pages and 15000000 serialized bytes.
       requestBody:
         required: true
         content:
@@ -893,6 +906,8 @@ paths:
                     minItems: 1
                     maxItems: 50
                     items: { $ref: "#/components/schemas/Project" }
+                  mode: { type: string, enum: [projects, pages] }
+                  pageCount: { type: integer, minimum: 1 }
                   count: { type: integer, minimum: 1, maximum: 50 }
                   variables: { type: array, uniqueItems: true, items: { type: string } }
         "400":

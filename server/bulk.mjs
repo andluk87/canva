@@ -6,8 +6,10 @@ const MAX_OUTPUT_BYTES = 30_000_000;
 export function registerBulk(app, { db, auth, access, write, validDocument }) {
   app.post('/api/projects/:id/bulk', auth, access, write, (req, res, next) => {
     if (req.project.deleted) return res.status(410).json({ error: 'Сначала восстановите исходный проект из корзины' });
-    const { csv, titlePattern, mode = 'projects' } = req.body || {};
-    if (mode !== 'projects') return res.status(400).json({ error: 'Поддерживается режим отдельных проектов: projects' });
+    const { csv, titlePattern, title: combinedTitle, mode = 'projects' } = req.body || {};
+    if (!['projects','pages'].includes(mode)) return res.status(400).json({ error: 'Режим должен быть projects или pages' });
+    if(mode==='pages'&&titlePattern!==undefined)return res.status(400).json({error:'Шаблон названий используется только для отдельных проектов'});
+    if(combinedTitle!==undefined&&(typeof combinedTitle!=='string'||!combinedTitle.trim()||combinedTitle.trim().length>200))return res.status(400).json({error:'Название общего проекта: от 1 до 200 символов'});
     if (titlePattern !== undefined && (typeof titlePattern !== 'string' || !titlePattern.trim() || titlePattern.length > 1000))
       return res.status(400).json({ error: 'Шаблон названия должен содержать от 1 до 1000 символов' });
     let prepared, variables;
@@ -15,6 +17,7 @@ export function registerBulk(app, { db, auth, access, write, validDocument }) {
       const parsed = parseCSV(csv);
       const source = JSON.parse(req.project.document);
       if (!validDocument(source)) throw new Error('Исходный документ некорректен');
+      if(mode==='pages'&&source.pages.length*parsed.rows.length>100)throw new Error('Один проект может содержать до 100 страниц. Уменьшите число строк или страниц исходника');
       variables = [...new Set([...documentVariables(source), ...textVariables(titlePattern || '')])];
       const missing = variables.filter((name) => !parsed.headers.includes(name));
       if (missing.length) throw new Error('В CSV отсутствуют столбцы: ' + missing.join(', '));
@@ -29,6 +32,11 @@ export function registerBulk(app, { db, auth, access, write, validDocument }) {
         if (bytes > MAX_OUTPUT_BYTES) throw new Error('Общий объём дизайнов превышает 30 МБ. Уменьшите число строк или размер исходного проекта');
         return { id: randomBytes(16).toString('hex'), title, document, serialized };
       });
+      if(mode==='pages'){
+        const document={pages:prepared.flatMap(project=>project.document.pages.map(page=>({...page,id:randomBytes(16).toString('hex')})))};
+        if(!validDocument(document))throw new Error('Общий проект превышает лимит документа 15 МБ или содержит некорректные страницы');
+        prepared=[{id:randomBytes(16).toString('hex'),title:combinedTitle?.trim()||`${req.project.title.slice(0,180)} — страницы`,document,serialized:JSON.stringify(document)}];
+      }
     } catch (error) {
       return res.status(400).json({ error: error.message });
     }
@@ -42,7 +50,7 @@ export function registerBulk(app, { db, auth, access, write, validDocument }) {
       const read = db.prepare('SELECT * FROM projects WHERE id=?');
       const projects = prepared.map((p) => ({ ...read.get(p.id), document: p.document, role: 'owner' }));
       db.exec('COMMIT');
-      res.status(201).json({ projects, count: projects.length, variables });
+      res.status(201).json({ projects, count: projects.length, variables, mode, pageCount:projects.reduce((sum,p)=>sum+p.document.pages.length,0) });
     } catch (error) {
       db.exec('ROLLBACK');
       next(error);

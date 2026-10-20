@@ -1,4 +1,7 @@
 import { test, expect } from '@playwright/test';
+import JSZip from 'jszip';
+import sharp from 'sharp';
+import { readFile } from 'node:fs/promises';
 
 test('bulk: CSV upload previews literal values and creates two personalized designs without changing the source', async ({ page }) => {
   const errors: string[] = [];
@@ -38,6 +41,18 @@ test('bulk: CSV upload previews literal values and creates two personalized desi
   const source = (await (await page.request.get('/api/projects/' + original.id)).json()).project;
   expect(source.title).toBe(original.title);
   expect(source.document.pages[0].canvas.objects.map((o: any) => o.text)).toEqual(['Для {{имя}}', 'Город: {{город}}']);
+  const downloadPromise = page.waitForEvent('download');
+  await modal.getByRole('button', { name: 'Скачать результаты ZIP', exact: true }).click();
+  const archive = await downloadPromise;
+  const zip = await JSZip.loadAsync(await readFile((await archive.path())!));
+  const files = Object.keys(zip.files).filter(name => !zip.files[name].dir);
+  expect(files).toHaveLength(2);
+  expect(files[0]).toMatch(/^001-[^/]+\/page-001\.png$/);
+  expect(files[1]).toMatch(/^002-[^/]+\/page-001\.png$/);
+  for (const name of files) {
+    const metadata = await sharp(await zip.file(name)!.async('nodebuffer')).metadata();
+    expect([metadata.format, metadata.width, metadata.height]).toEqual(['png',800,600]);
+  }
   await page.goto('/?project=' + projects[1].id);
   await expect(page.locator('.upper-canvas')).toBeVisible();
   await expect(page.getByLabel('Название проекта')).toHaveValue('Приглашение — Иван');

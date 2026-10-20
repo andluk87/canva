@@ -57,6 +57,7 @@ import { api, json, Project, User, DesignPage, uid } from "./api";
 import { templates, templateDocument } from "./templates";
 import { Modal, Artwork } from "./ui";
 import AdvancedTools from './advanced/AdvancedTools';
+import ExportDialog from './export/ExportDialog';
 import ImageTools from './image-tools/ImageTools';
 import DataTools from './data-tools/DataTools';
 import PersonalTemplates from './PersonalTemplates';
@@ -114,8 +115,7 @@ export default function Editor({
     [versions, setVersions] = useState<any[]>([]),
     [comments, setComments] = useState<any[]>([]),
     [members, setMembers] = useState<any[]>([]),
-    [exportType, setExportType] = useState("png"),
-    [exportBusy, setExportBusy] = useState(false),
+    [exportSnapshot,setExportSnapshot]=useState<{pages:DesignPage[];current:number;title:string}|null>(null),
     [presentation, setPresentation] = useState(false),
     [snap, setSnap] = useState(false),
     [panelError, setPanelError] = useState("");
@@ -752,97 +752,6 @@ export default function Editor({
       await temp.dispose();
     }
   }
-  async function doExport() {
-    capture();
-    setExportBusy(true);
-    try {
-      const safeName =
-        titleRef.current.replace(/[^\p{L}\p{N}\-_ ]/gu, "").slice(0, 80) ||
-        "forma";
-      if (exportType === "json") {
-        download(
-          new Blob(
-            [
-              JSON.stringify(
-                {
-                  schemaVersion: 1,
-                  width: project.width,
-                  height: project.height,
-                  document: { pages: pagesRef.current },
-                },
-                null,
-                2,
-              ),
-            ],
-            { type: "application/json" },
-          ),
-          safeName + ".json",
-        );
-      } else if(exportType==='pptx'){
-        const {exportPptx}=await import('./presentation/exportPptx');
-        download(await exportPptx({pages:clone(pagesRef.current),width:project.width,height:project.height,title:titleRef.current}),safeName+'.pptx');
-      } else if (exportType === "pdf") {
-        const { jsPDF } = await import("jspdf");
-        const pdf = new jsPDF({
-          orientation:
-            project.width > project.height ? "landscape" : "portrait",
-          unit: "px",
-          format: [project.width, project.height],
-          hotfixes: ["px_scaling"],
-        });
-        const render = new Canvas(undefined, {
-          width: project.width,
-          height: project.height,
-        });
-        try {
-          for (let i = 0; i < pagesRef.current.length; i++) {
-            await render.loadFromJSON(pagesRef.current[i].canvas);
-            render.requestRenderAll();
-            const image = render.toDataURL({ format: "png", multiplier: 1 });
-            if (i)
-              pdf.addPage(
-                [project.width, project.height],
-                project.width > project.height ? "landscape" : "portrait",
-              );
-            pdf.addImage(image, "PNG", 0, 0, project.width, project.height);
-          }
-          pdf.save(safeName + ".pdf");
-        } finally {
-          await render.dispose();
-        }
-      } else {
-        const render = new Canvas(undefined, {
-          width: project.width,
-          height: project.height,
-        });
-        try {
-          await render.loadFromJSON(pagesRef.current[pageIndex.current].canvas);
-          const format = exportType === "jpg" ? "jpeg" : "png";
-          const data = render.toDataURL({ format, quality: 1, multiplier: 1 });
-          const a = document.createElement("a");
-          a.href = data;
-          a.download = safeName + "." + exportType;
-          a.click();
-        } finally {
-          await render.dispose();
-        }
-      }
-      toast("Файл экспортирован");
-      setModal("");
-    } catch (e) {
-      toast("Не удалось экспортировать: " + (e as Error).message);
-    } finally {
-      setExportBusy(false);
-    }
-  }
-  function download(blob: Blob, name: string) {
-    const url = URL.createObjectURL(blob),
-      a = document.createElement("a");
-    a.href = url;
-    a.download = name;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 10000);
-  }
   async function importFile(file: File) {
     try {
       const d = JSON.parse(await file.text());
@@ -1009,7 +918,7 @@ export default function Editor({
         {project.role==='owner'&&<button className="secondary compact" disabled={!liveReady} aria-label="Опубликовать" title="Опубликовать" onClick={async()=>{await save();if(live.current?.pending||!live.current?.connected){toast('Дождитесь синхронизации с сервером');return;}setModal('Опубликовать')}}><Globe size={16}/></button>}
         <button
           className="primary compact"
-          onClick={() => setModal("Скачать дизайн")}
+          onClick={() => {capture();setExportSnapshot({pages:clone(pagesRef.current),current:pageIndex.current,title:titleRef.current});setModal("Скачать дизайн")}}
         >
           <Download size={17} />
           <span>Скачать</span>
@@ -1769,46 +1678,12 @@ export default function Editor({
           </aside>
         )}
       </div>
-      {modal==='Массовое создание'&&<BulkCreate projectId={project.id} onClose={()=>setModal('')} onCreated={generated=>toast(`Создано дизайнов: ${generated.length}`)} toast={toast}/>}
+      {modal==='Скачать дизайн'&&exportSnapshot&&<ExportDialog design={{title:exportSnapshot.title,width:project.width,height:project.height,document:{pages:exportSnapshot.pages}}} current={exportSnapshot.current} onClose={()=>setModal('')} toast={toast}/>}
+      {modal==='Массовое создание' &&<BulkCreate projectId={project.id} onClose={()=>setModal('')} onCreated={generated=>toast(`Создано дизайнов: ${generated.length}`)} toast={toast}/>}
       {modal==='Опубликовать'&&<PublishDesign projectId={project.id} onClose={()=>setModal('')} toast={toast}/>}
-      {modal && !['Массовое создание','Опубликовать'].includes(modal) && (
+      {modal && !['Массовое создание','Опубликовать','Скачать дизайн'].includes(modal) && (
         <Modal title={modal} onClose={() => setModal("")}>
           {panelError && <div className="error-box">{panelError}</div>}
-          {modal === "Скачать дизайн" && (
-            <>
-              <p className="muted">
-                PNG и JPG — текущая страница. PDF, PPTX и JSON — весь проект.
-              </p>
-              <label>
-                Формат файла
-                <select
-                  value={exportType}
-                  aria-label="Формат файла"
-                  onChange={(e) => setExportType(e.target.value)}
-                >
-                  <option value="png">PNG — высокое качество</option>
-                  <option value="jpg">JPG — фотография</option>
-                  <option value="pdf">PDF — все страницы</option>
-                  <option value="pptx">PPTX — презентация</option>
-                  <option value="json">JSON — редактируемый документ</option>
-                </select>
-              </label>
-              <div className="export-summary">
-                <span>
-                  {project.width} × {project.height} px
-                </span>
-                <span>{pages.length} стр.</span>
-              </div>
-              <button
-                className="primary full"
-                disabled={exportBusy}
-                onClick={doExport}
-              >
-                <Download size={18} />
-                {exportBusy ? "Готовим файл…" : "Скачать"}
-              </button>
-            </>
-          )}
           {modal === "Общий доступ" && (
             <>
               <p className="muted">
