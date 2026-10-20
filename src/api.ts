@@ -1,3 +1,4 @@
+export class ApiError extends Error {constructor(message:string,public status:number){super(message);this.name="ApiError"}}
 export async function api<T = any>(
   url: string,
   options: RequestInit = {},
@@ -11,7 +12,7 @@ export async function api<T = any>(
   });
   const data = await response.json();
   if (!response.ok)
-    throw new Error(data.error || "Не удалось выполнить запрос");
+    throw new ApiError(data.error || "Не удалось выполнить запрос",response.status);
   return data;
 }
 export const json = (body: unknown, method = "POST") => ({

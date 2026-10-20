@@ -49,10 +49,18 @@ import {
   X,
   Upload,
   RotateCw,
+  SlidersHorizontal,
+  FileSpreadsheet,
+  Globe,
 } from "lucide-react";
 import { api, json, Project, User, DesignPage, uid } from "./api";
 import { templates, templateDocument } from "./templates";
 import { Modal, Artwork } from "./ui";
+import AdvancedTools from './advanced/AdvancedTools';
+import BulkCreate from './BulkCreate';
+import PublishDesign from './PublishDesign';
+import {cacheProject} from './offline/cache';
+import {cacheGeneration} from './offline/store.mjs';
 import { Collaboration, type Peer } from "./collaboration";
 import type { Snapshot } from "../shared/collaboration.mjs";
 FabricObject.customProperties = [
@@ -75,6 +83,7 @@ export default function Editor({
   onExit: () => void;
   toast: (s: string) => void;
 }) {
+  const localGeneration=useRef(cacheGeneration(user.id));
   const canvasEl = useRef<HTMLCanvasElement>(null),
     canvas = useRef<Canvas | null>(null),
     loading = useRef(false),
@@ -151,6 +160,7 @@ export default function Editor({
   async function save() {
     if (readOnly) return;
     capture();
+    void cacheProject(user.id,{...project,title:titleRef.current,document:{pages:clone(pagesRef.current)}},localGeneration.current);
     let thumbnail: string | undefined;
     const c = canvas.current;
     try {
@@ -341,6 +351,7 @@ export default function Editor({
       loading.current = false;
       live.current = new Collaboration({
         projectId: project.id,
+        userId:user.id,
         onSnapshot: (state) => {
           pendingRemote.current = state;
           drainRef.current();
@@ -359,7 +370,7 @@ export default function Editor({
       });
     });
     const unload = (e: BeforeUnloadEvent) => {
-      if (dirty.current) {
+      if (dirty.current&&!live.current?.durable) {
         e.preventDefault();
         e.returnValue = "";
       }
@@ -881,7 +892,7 @@ export default function Editor({
           onClick={async () => {
             await save();
             if (
-              dirty.current &&
+              dirty.current && !live.current?.durable &&
               !confirm("Есть несохранённые изменения. Всё равно выйти?")
             )
               return;
@@ -939,7 +950,7 @@ export default function Editor({
           title="Сохранить Ctrl+S"
         >
           {status === "Сохранено" ? <Check size={14} /> : <Save size={14} />}
-          <span>{readOnly ? "Только просмотр" : status}</span>
+          <span>{liveRole==='viewer'?"Только просмотр":status}</span>
         </button>
         <div className="editor-header-spacer" />
         <div className="live-presence" aria-label="Участники онлайн">
@@ -986,6 +997,8 @@ export default function Editor({
           <Share2 size={16} />
           <span>Поделиться</span>
         </button>
+        <button className="secondary compact" disabled={readOnly} aria-label="Массовое создание" title="Массовое создание" onClick={async()=>{await save();if(live.current?.pending||!live.current?.connected){toast('Дождитесь синхронизации с сервером');return;}setModal('Массовое создание')}}><FileSpreadsheet size={16}/></button>
+        {project.role==='owner'&&<button className="secondary compact" disabled={!liveReady} aria-label="Опубликовать" title="Опубликовать" onClick={async()=>{await save();if(live.current?.pending||!live.current?.connected){toast('Дождитесь синхронизации с сервером');return;}setModal('Опубликовать')}}><Globe size={16}/></button>}
         <button
           className="primary compact"
           onClick={() => setModal("Скачать дизайн")}
@@ -1003,6 +1016,7 @@ export default function Editor({
             { name: "Загрузки", icon: Image },
             { name: "Фон", icon: Palette },
             { name: "Слои", icon: Layers },
+            { name: "Инструменты", icon: SlidersHorizontal },
           ].map((n) => (
             <button
               key={n.name}
@@ -1026,6 +1040,7 @@ export default function Editor({
                 <X size={16} />
               </button>
             </div>
+            {tab==='Инструменты'&&c&&<AdvancedTools canvas={c} selected={selected} readOnly={readOnly} onChange={record} toast={toast} width={project.width} height={project.height} tick={tick}/>}
             {tab === "Шаблоны" && (
               <>
                 <p className="muted small">
@@ -1737,7 +1752,9 @@ export default function Editor({
           </aside>
         )}
       </div>
-      {modal && (
+      {modal==='Массовое создание'&&<BulkCreate projectId={project.id} onClose={()=>setModal('')} onCreated={generated=>toast(`Создано дизайнов: ${generated.length}`)} toast={toast}/>}
+      {modal==='Опубликовать'&&<PublishDesign projectId={project.id} onClose={()=>setModal('')} toast={toast}/>}
+      {modal && !['Массовое создание','Опубликовать'].includes(modal) && (
         <Modal title={modal} onClose={() => setModal("")}>
           {panelError && <div className="error-box">{panelError}</div>}
           {modal === "Скачать дизайн" && (

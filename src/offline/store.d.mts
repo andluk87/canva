@@ -1,0 +1,11 @@
+export type LocalDocument={state:Uint8Array;epoch:string;role:string;revision:number;pending:boolean;updatedAt?:number};
+export function openDatabase():Promise<IDBDatabase>;
+export function cacheGeneration(userId:string):number;
+export function putDocument(userId:string,id:string,state:LocalDocument,generation?:number):Promise<unknown>;
+export function getDocument(userId:string,id:string):Promise<LocalDocument|undefined>;
+export function removeDocument(userId:string,id:string):Promise<unknown>;
+export function putProject(userId:string,project:any,generation?:number):Promise<unknown>;
+export function getProject(userId:string,id:string):Promise<any|undefined>;
+export function listProjects(userId:string):Promise<any[]>;
+export function clearUserData(userId:string):Promise<void>;
+export function closeDatabase():Promise<void>;

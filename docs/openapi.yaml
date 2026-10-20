@@ -1,8 +1,13 @@
 openapi: 3.1.0
 info:
   title: Forma Core API
-  version: 0.2.0
-  description: Session-cookie API. Project writes require matching revision; conflicts return 409. See README for scope limitations.
+  version: 0.3.0
+  description: >-
+    Session-cookie API. Project writes require matching revision; conflicts return 409.
+    Mutating requests with an Origin header must match the request host or return 403.
+    Public publications explicitly expose sanitized design snapshots, independently of
+    project member roles. Account security secrets and recovery codes are returned
+    only by their setup or rotation operations. See README for scope limitations.
 servers:
   - url: /api
 security:
@@ -21,11 +26,83 @@ components:
         error: { type: string }
     Credentials:
       type: object
-      required: [email, password]
+      required: [email, password, name]
       properties:
         email: { type: string, format: email }
         password: { type: string, minLength: 10, maxLength: 256 }
-        name: { type: string, maxLength: 100 }
+        name: { type: string, minLength: 1, maxLength: 100 }
+    LoginCredentials:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, maxLength: 256 }
+        twoFactorCode:
+          type: string
+          maxLength: 100
+          description: Required when TOTP is enabled. A fresh six-digit authenticator code or unused recovery code; whitespace and recovery-code hyphens are ignored.
+    User:
+      type: object
+      required: [id, email, name, brand]
+      properties:
+        id: { type: string }
+        email: { type: string, format: email }
+        name: { type: string }
+        brand: { type: object, additionalProperties: true }
+    UserResponse:
+      type: object
+      required: [user]
+      properties:
+        user: { $ref: "#/components/schemas/User" }
+    Ok:
+      type: object
+      required: [ok]
+      properties:
+        ok: { type: boolean, const: true }
+    RevokedSessions:
+      allOf:
+        - { $ref: "#/components/schemas/Ok" }
+        - type: object
+          required: [revoked]
+          properties:
+            revoked: { type: integer, minimum: 0 }
+    CurrentPassword:
+      type: object
+      required: [currentPassword]
+      properties:
+        currentPassword: { type: string, minLength: 1, maxLength: 256 }
+    FactorConfirmation:
+      allOf:
+        - { $ref: "#/components/schemas/CurrentPassword" }
+        - type: object
+          required: [code]
+          properties:
+            code:
+              type: string
+              maxLength: 100
+              description: Fresh six-digit TOTP or unused recovery code. Confirming initial setup accepts TOTP only. Reused TOTP time steps and consumed recovery codes are rejected.
+    RecoveryCodes:
+      type: object
+      required: [recoveryCodes]
+      properties:
+        recoveryCodes:
+          type: array
+          minItems: 10
+          maxItems: 10
+          description: Ten one-use codes shown only on generation; a new set invalidates all previous recovery codes.
+          items: { type: string, pattern: "^[A-F0-9]{4}(-[A-F0-9]{4}){3}$" }
+    AccountSession:
+      type: object
+      required: [id, current, created, expires, userAgent]
+      properties:
+        id:
+          type: string
+          pattern: "^[a-f0-9]{64}$"
+          description: Opaque identifier for session management, not an authentication token.
+        current: { type: boolean }
+        created: { type: [string, "null"], format: date-time }
+        expires: { type: string, format: date-time }
+        userAgent: { type: string, maxLength: 300 }
     Document:
       type: object
       required: [pages]
@@ -66,12 +143,124 @@ components:
         folder: { type: string, maxLength: 100 }
         favorite: { type: boolean }
         deleted: { type: boolean }
+    Project:
+      allOf:
+        - { $ref: "#/components/schemas/ProjectInput" }
+        - type: object
+          required: [id, title, kind, width, height, document, revision, role, created, updated]
+          properties:
+            id: { type: string }
+            owner_id: { type: string }
+            revision: { type: integer, minimum: 1 }
+            role: { type: string, enum: [owner, editor, viewer] }
+            folder: { type: string }
+            favorite: { type: integer, enum: [0, 1] }
+            deleted: { type: integer, enum: [0, 1] }
+            thumbnail: { type: [string, "null"] }
+            created: { type: string, format: date-time }
+            updated: { type: string, format: date-time }
+    BulkInput:
+      type: object
+      required: [csv]
+      properties:
+        csv:
+          type: string
+          description: >-
+            UTF-8 CSV text up to 1000000 bytes, with a unique nonempty header and 1–50 data rows.
+            Comma or semicolon delimiter is detected automatically. Quoted cells, escaped quotes,
+            quoted newlines, CRLF and a UTF-8 BOM are supported. At most 100 columns and 20000
+            characters per cell. Every row must match the header width.
+          examples: ["name,city\nAnna,Moscow\nIvan,Kazan"]
+        titlePattern:
+          type: string
+          minLength: 1
+          maxLength: 1000
+          description: Optional title with {{column}} placeholders. Resolved names must contain 1–200 characters; default is source title followed by row number.
+          examples: ["Certificate — {{name}}"]
+        mode: { type: string, enum: [projects], default: projects }
+    PublicationInput:
+      type: object
+      description: >-
+        Set at most one expiry field. Null means no expiration. Omitting both fields creates
+        a nonexpiring link on POST and preserves the existing expiry on PUT. Documents and
+        titles in the request are ignored; the saved server project is the snapshot source.
+      not:
+        required: [expiresInDays, expiresAt]
+      properties:
+        expiresInDays: { type: [integer, "null"], minimum: 1, maximum: 365 }
+        expiresAt:
+          type: [string, "null"]
+          format: date-time
+          description: Future server time within the next 366 days, as an alternative to expiresInDays.
+    PublicationLink:
+      type: object
+      required: [token, version, sourceRevision, url, created, updated, expiresAt, revoked, expired]
+      properties:
+        token: { type: string, pattern: "^[A-Za-z0-9_-]{43}$" }
+        version: { type: integer, minimum: 1 }
+        sourceRevision: { type: integer, minimum: 1 }
+        url: { type: string, description: "Relative public viewer URL in the form /?view=TOKEN." }
+        created: { type: string, format: date-time }
+        updated: { type: string, format: date-time }
+        expiresAt: { type: [string, "null"], format: date-time }
+        revoked: { type: boolean }
+        expired: { type: boolean }
+    PublicationLinkResponse:
+      type: object
+      required: [publication]
+      properties:
+        publication: { $ref: "#/components/schemas/PublicationLink" }
+    PublicSnapshot:
+      type: object
+      required: [title, kind, width, height, version, created, updated, expiresAt, contentHash, document]
+      properties:
+        title: { type: string }
+        kind: { type: string }
+        width: { type: integer, minimum: 100, maximum: 6000 }
+        height: { type: integer, minimum: 100, maximum: 6000 }
+        version: { type: integer, minimum: 1 }
+        created: { type: string, format: date-time }
+        updated: { type: string, format: date-time }
+        expiresAt: { type: [string, "null"], format: date-time }
+        contentHash: { type: string, pattern: "^[a-f0-9]{64}$", description: SHA-256 of the canonical stored snapshot document. }
+        document: { $ref: "#/components/schemas/Document" }
+  responses:
+    BadRequest:
+      description: Invalid input.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthorized:
+      description: Login required or session expired.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: Insufficient permission, invalid current password or disallowed request Origin.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: Resource absent or inaccessible to this account.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    TooManyAttempts:
+      description: More than 20 sensitive account-security requests per account in one minute.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
   parameters:
     projectId:
       name: id
       in: path
       required: true
       schema: { type: string }
+    publicationToken:
+      name: token
+      in: path
+      required: true
+      schema: { type: string, pattern: "^[A-Za-z0-9_-]{43}$" }
 paths:
   /health:
     get:
@@ -98,10 +287,20 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/Credentials" }
+            schema: { $ref: "#/components/schemas/LoginCredentials" }
       responses:
         "200": { description: Session cookie issued }
-        "401": { description: Invalid credentials }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401":
+          description: Invalid credentials or missing, incorrect or already consumed second factor. When a second factor is required the response includes requiresTwoFactor true; retry login with twoFactorCode.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/Error" }
+                  - type: object
+                    properties:
+                      requiresTwoFactor: { type: boolean, const: true }
         "429": { description: Rate limit }
   /auth/me:
     get:
@@ -273,3 +472,414 @@ paths:
         "403": { description: Origin rejected }
         "404": { description: Project absent or inaccessible }
         "429": { description: Connection limit }
+
+  /account/profile:
+    patch:
+      summary: Change the current user's display name.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                  maxLength: 100
+                  description: Trimmed before saving. Blank names and ASCII control characters are rejected.
+      responses:
+        "200":
+          description: Updated profile; connected collaborators receive refreshed account information.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /account/password:
+    post:
+      summary: Change password and revoke every other session.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: "#/components/schemas/CurrentPassword" }
+                - type: object
+                  required: [newPassword]
+                  properties:
+                    newPassword:
+                      type: string
+                      minLength: 10
+                      maxLength: 256
+                      description: Must differ from the current password.
+      responses:
+        "200":
+          description: Password changed atomically; current session retained and other sessions revoked.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RevokedSessions" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "429": { $ref: "#/components/responses/TooManyAttempts" }
+  /account/sessions:
+    get:
+      summary: List this user's unexpired sessions without exposing authentication tokens.
+      responses:
+        "200":
+          description: Sessions ordered by creation time, most recent first. Older migrated sessions can have a null created date.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sessions]
+                properties:
+                  sessions:
+                    type: array
+                    items: { $ref: "#/components/schemas/AccountSession" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /account/sessions/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: An opaque session identifier returned by GET /account/sessions.
+        schema: { type: string, pattern: "^[a-f0-9]{64}$" }
+    delete:
+      summary: Revoke another session belonging to the current user.
+      responses:
+        "200":
+          description: Session revoked and its live connections lose authorization.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ok" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Cannot revoke the current session here; use POST /auth/logout.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /account/logout-all:
+    post:
+      summary: Revoke all sessions including the current session and clear the session cookie.
+      responses:
+        "200":
+          description: All sessions revoked; subsequent authenticated requests need a new login.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RevokedSessions" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /account/security:
+    get:
+      summary: Read second-factor status without returning the authenticator secret or recovery codes.
+      responses:
+        "200":
+          description: Current TOTP configuration and remaining recovery-code count.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [twoFactorEnabled, enabledAt, recoveryCodesRemaining]
+                properties:
+                  twoFactorEnabled: { type: boolean }
+                  enabledAt: { type: [string, "null"], format: date-time }
+                  recoveryCodesRemaining: { type: integer, minimum: 0, maximum: 10 }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /account/2fa/setup:
+    post:
+      summary: Start a ten-minute authenticator enrollment after current-password verification.
+      description: >-
+        A new call replaces any pending enrollment. TOTP uses RFC 6238 SHA-1,
+        six digits and 30-second time steps. Merely starting setup does not enable
+        the second factor; POST /account/2fa/confirm must verify a generated code.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CurrentPassword" }
+      responses:
+        "200":
+          description: Pending enrollment secret and authenticator URI. Response uses Cache-Control no-store.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [secret, expires, otpauthUri]
+                properties:
+                  secret: { type: string, pattern: "^[A-Z2-7]{32}$", description: Base32 secret to enter into an authenticator; handle as sensitive data. }
+                  expires: { type: string, format: date-time }
+                  otpauthUri: { type: string, format: uri, description: "otpauth TOTP enrollment URI, including issuer Forma." }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Second factor is already enabled.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429": { $ref: "#/components/responses/TooManyAttempts" }
+  /account/2fa/confirm:
+    post:
+      summary: Verify pending TOTP setup, enable the second factor and issue ten recovery codes.
+      description: Other sessions are revoked. The accepted TOTP time step cannot be reused for login or another sensitive second-factor operation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FactorConfirmation" }
+      responses:
+        "200":
+          description: TOTP enabled; keep the one-time-displayed recovery codes securely. Response uses Cache-Control no-store.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/Ok" }
+                  - { $ref: "#/components/schemas/RecoveryCodes" }
+        "400":
+          description: Enrollment absent or expired, or incorrect authenticator code.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: Second factor is already enabled.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429": { $ref: "#/components/responses/TooManyAttempts" }
+  /account/2fa/disable:
+    post:
+      summary: Disable TOTP using the current password and a fresh TOTP or unused recovery code.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FactorConfirmation" }
+      responses:
+        "200":
+          description: Second factor, pending enrollment and recovery codes cleared.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ok" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: Incorrect current password, missing/incorrect/reused second factor, or disallowed Origin.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: Second factor is not enabled.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429": { $ref: "#/components/responses/TooManyAttempts" }
+  /account/2fa/recovery:
+    post:
+      summary: Replace recovery codes after verifying the current password and a fresh second factor.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FactorConfirmation" }
+      responses:
+        "200":
+          description: New set of ten recovery codes; previous codes invalidated. Response uses Cache-Control no-store.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RecoveryCodes" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: Incorrect current password, missing/incorrect/reused second factor, or disallowed Origin.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: Second factor must be enabled first.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "429": { $ref: "#/components/responses/TooManyAttempts" }
+
+  /projects/{id}/bulk:
+    parameters:
+      - { $ref: "#/components/parameters/projectId" }
+    post:
+      summary: Create one personalized project per CSV data row from a saved source design.
+      description: >-
+        Owner or editor required. Replaces {{column}} placeholders only in text properties,
+        including nested groups, and in the optional titlePattern. Every referenced variable
+        must have a CSV header. Preserves image URLs, styling, source project and page/object IDs
+        within each separate copy. New projects belong to the calling user and inherit no
+        members or publications. All rows are validated before a single atomic transaction;
+        combined serialized documents may not exceed 30000000 bytes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BulkInput" }
+      responses:
+        "201":
+          description: All personalized projects created successfully; no partial batch is committed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [projects, count, variables]
+                properties:
+                  projects:
+                    type: array
+                    minItems: 1
+                    maxItems: 50
+                    items: { $ref: "#/components/schemas/Project" }
+                  count: { type: integer, minimum: 1, maximum: 50 }
+                  variables: { type: array, uniqueItems: true, items: { type: string } }
+        "400":
+          description: Invalid CSV, missing variable column, invalid mode/title pattern, generated document or batch size limit.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "410":
+          description: Source project is in the trash; restore it before creating copies.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /projects/{id}/publications:
+    parameters:
+      - { $ref: "#/components/parameters/projectId" }
+    get:
+      summary: List up to 100 recently updated public links, including expired and revoked links.
+      description: Owner only. Project viewer/editor membership does not grant publication management.
+      responses:
+        "200":
+          description: Link metadata without snapshot contents. Response uses Cache-Control no-store.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [publications]
+                properties:
+                  publications:
+                    type: array
+                    maxItems: 100
+                    items: { $ref: "#/components/schemas/PublicationLink" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    post:
+      summary: Explicitly publish a sanitized snapshot under a new random 256-bit token.
+      description: >-
+        Owner only. Captures the saved server revision, not unsaved editor state. Normalizes
+        embedded PNG/JPG/WebP through sharp; rejects scripts, SVG, external resources,
+        unsupported object types, excessive complexity and normalized snapshots over 18 MB.
+        Private account details, members, comments, history and unrelated assets are excluded.
+        Private edits do not change this snapshot until an explicit PUT publication operation.
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PublicationInput" }
+      responses:
+        "201":
+          description: New public link and immutable version 1 snapshot created. Response uses Cache-Control no-store.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublicationLinkResponse" }
+        "400":
+          description: Invalid expiry, unsafe content, unsupported image/object or snapshot complexity/size limit.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Project is trashed, changed during snapshot processing, or already has 50 unrevoked links.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /projects/{id}/publications/{token}:
+    parameters:
+      - { $ref: "#/components/parameters/projectId" }
+      - { $ref: "#/components/parameters/publicationToken" }
+    put:
+      summary: Publish a new immutable snapshot version under the existing link.
+      description: Owner only. Uses the same sanitizer and saved-project revision checks as POST. Prior snapshot rows remain immutable; guests see the latest explicitly published version.
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PublicationInput" }
+      responses:
+        "200":
+          description: Snapshot version incremented under the same token. Response uses Cache-Control no-store.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublicationLinkResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: Project is trashed or the project/publication changed during snapshot processing.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "410":
+          description: Link was revoked permanently; publish a new link instead.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    delete:
+      summary: Permanently revoke the public link.
+      description: Owner only. Future requests return 410; already loaded, copied or downloaded snapshots cannot be recalled.
+      responses:
+        "200":
+          description: Link revoked. Repeating revocation of an existing link is safe.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ok" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+  /publications/{token}:
+    parameters:
+      - { $ref: "#/components/parameters/publicationToken" }
+    get:
+      security: []
+      summary: Read a public design snapshot without signing in.
+      description: >-
+        A valid unrevoked, unexpired token is sufficient. Returns snapshot pages and presentation
+        metadata only, without owner identity, member list, comments, project revision history
+        or access to other private assets. Images are verified embedded PNG data URIs. All
+        responses use Cache-Control no-store, Referrer-Policy no-referrer and X-Robots-Tag
+        noindex, nofollow, noarchive. Trashed and permanently deleted projects are unavailable.
+      responses:
+        "200":
+          description: Latest explicitly published snapshot, suitable for read-only rendering.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [publication]
+                properties:
+                  publication: { $ref: "#/components/schemas/PublicSnapshot" }
+        "404":
+          description: Unknown or malformed token, or source project is trashed/deleted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "410":
+          description: Link expired or was revoked by its owner.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }

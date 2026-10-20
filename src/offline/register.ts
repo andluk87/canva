@@ -1,0 +1,1 @@
+export function registerOfflineShell(){if(import.meta.env?.PROD&&'serviceWorker'in navigator){addEventListener('load',()=>{navigator.serviceWorker.register('/sw.js').catch(()=>{/* Editing still works when the browser does not support offline shell. */})});}}

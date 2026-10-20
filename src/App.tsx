@@ -1,4 +1,4 @@
-import { useEffect, useState, lazy, Suspense } from "react";
+import { useEffect, useState, useRef, lazy, Suspense } from "react";
 import {
   Home,
   FolderOpen,
@@ -23,11 +23,16 @@ import {
   Heart,
   Grid2X2,
   LogIn,
+  Settings,
 } from "lucide-react";
 import { api, json, Project, User } from "./api";
 import { formats, templates, Template, templateDocument } from "./templates";
 const Editor = lazy(() => import("./Editor"));
 import { Modal, Artwork } from "./ui";
+import AccountSettings from './AccountSettings';
+import {clearUserData} from './offline/store.mjs';
+import {cachedUser,rememberUser,forgetUser,signOutPending,clearSignOutPending,cacheProject,cachedProject,cachedProjects,cacheProjects} from './offline/cache';
+const PublicDesign=lazy(()=>import('./PublicDesign'));
 export default function App() {
   const [user, setUser] = useState<User | null>(null),
     [checked, setChecked] = useState(false),
@@ -44,6 +49,13 @@ export default function App() {
     [busy, setBusy] = useState(false),
     [mobile, setMobile] = useState(false),
     [menu, setMenu] = useState<string | null>(null);
+  const [online,setOnline]=useState(navigator.onLine);
+  const identity=useRef({id:null as string|null,generation:0});
+  const navigation=useRef(0);
+  const logoutTask=useRef<Promise<void>>(Promise.resolve());
+  function acceptUser(next:User|null){if(identity.current.id!==next?.id){identity.current={id:next?.id||null,generation:identity.current.generation+1};navigation.current++;}setUser(next);}
+  const current=(ticket:typeof identity.current)=>identity.current===ticket;
+  const publicToken=new URLSearchParams(location.search).get("view");
   const [brandName, setBrandName] = useState("Мой бренд"),
     [brandColors, setBrandColors] = useState(["#7048ed", "#1e2433", "#f7f5ff"]),
     [brandFont, setBrandFont] = useState("Arial");
@@ -52,16 +64,23 @@ export default function App() {
     setTimeout(() => setNotice(""), 4500);
   };
   const reload = async () => {
+    const ticket=identity.current;if(!ticket.id)return;
     try {
-      setProjects((await api("/projects")).projects);
+      const data=(await api("/projects")).projects;if(!current(ticket))return;setProjects(data);void cacheProjects(ticket.id,data);
     } catch (e) {
-      toast((e as Error).message);
+      if(!current(ticket))return;
+      if(!(e as any).status||(e as any).status>=500){const saved=await cachedProjects(ticket.id);if(current(ticket))setProjects(saved);}else toast((e as Error).message);
     }
   };
+  useEffect(()=>{const update=()=>setOnline(navigator.onLine);addEventListener('online',update);addEventListener('offline',update);return()=>{removeEventListener('online',update);removeEventListener('offline',update)}},[]);
+  useEffect(()=>{const changed=(event:StorageEvent)=>{if(!event.key?.startsWith('forma.offline.'))return;const id=identity.current.id;if(id&&cachedUser()?.id!==id){acceptUser(null);setActive(null);setProjects([]);history.replaceState({},'', '/');void clearUserData(id).catch(()=>{});}};addEventListener('storage',changed);return()=>removeEventListener('storage',changed)},[]);
   useEffect(() => {
+    if(publicToken){setChecked(true);return;}
+    const ticket=identity.current;
+    if(signOutPending()){logoutTask.current=api('/auth/logout',json({})).then(()=>clearSignOutPending()).catch(e=>{if(e.status===401)clearSignOutPending()}).finally(()=>setChecked(true));return;}
     api("/auth/me")
-      .then((d) => setUser(d.user))
-      .catch(() => {})
+      .then((d) => {if(!current(ticket))return;rememberUser(d.user);acceptUser(d.user)})
+      .catch((error) => {if(!current(ticket))return;if(!error.status||error.status>=500)acceptUser(cachedUser());else void forgetUser(cachedUser()?.id)})
       .finally(() => setChecked(true));
   }, []);
   useEffect(() => {
@@ -84,12 +103,17 @@ export default function App() {
     return () => removeEventListener("popstate", onPop);
   }, [user]);
   async function open(id: string) {
+    const ticket=identity.current,request=++navigation.current;if(!ticket.id)return;
+    const valid=()=>current(ticket)&&request===navigation.current;
     try {
-      const d = await api("/projects/" + id);
+      const d = await api("/projects/" + id);if(!valid())return;
+      await cacheProject(ticket.id,d.project);if(!valid())return;
       setActive(d.project);
       history.replaceState({}, "", "?project=" + id);
     } catch (e) {
-      toast((e as Error).message);
+      if(!valid())return;
+      if(!(e as any).status||(e as any).status>=500){const saved=await cachedProject(ticket.id,id);if(!valid())return;if(saved?.document?.pages?.length){setActive(saved);history.replaceState({},'', '?project='+id);return;}toast('Нет локальной копии. Откройте этот проект при доступном интернете.');}
+      else toast((e as Error).message);
     }
   }
   const requireUser = () => {
@@ -104,6 +128,7 @@ export default function App() {
     custom?: { title: string; width: number; height: number; kind: string },
   ) {
     if (!requireUser()) return;
+    const ticket=identity.current;
     setBusy(true);
     try {
       const f = custom || {
@@ -116,7 +141,10 @@ export default function App() {
         "/projects",
         json({ ...f, ...(t ? { document: templateDocument(t) } : {}) }),
       );
+      if(!current(ticket))return;
       setCreate(false);
+      await cacheProject(ticket.id!,d.project);
+      if(!current(ticket))return;
       setActive(d.project);
       history.pushState({}, "", "?project=" + d.project.id);
       await reload();
@@ -127,11 +155,13 @@ export default function App() {
     }
   }
   async function patch(p: Project, b: any) {
+    const ticket=identity.current;
     try {
       await api(
         "/projects/" + p.id,
         json({ revision: p.revision, ...b }, "PUT"),
       );
+      if(!current(ticket))return;
       await reload();
       setMenu(null);
     } catch (e) {
@@ -140,8 +170,10 @@ export default function App() {
   }
   async function copyProject(p: Project) {
     if (!requireUser()) return;
+    const ticket=identity.current;
     try {
       const { project } = await api("/projects/" + p.id);
+      if(!current(ticket))return;
       await api(
         "/projects",
         json({
@@ -152,6 +184,7 @@ export default function App() {
           document: project.document,
         }),
       );
+      if(!current(ticket))return;
       await reload();
       setMenu(null);
       toast("Копия проекта создана");
@@ -164,12 +197,16 @@ export default function App() {
     setError("");
     setBusy(true);
     const f = Object.fromEntries(new FormData(e.currentTarget));
+    const ticket=identity.current;
     try {
+      await logoutTask.current;
+      if(!current(ticket))return;
       const d = await api(
         "/auth/" + (register ? "register" : "login"),
         json(f),
       );
-      setUser(d.user);
+      if(!current(ticket))return;
+      rememberUser(d.user);acceptUser(d.user);
       setAuth(false);
       toast("Добро пожаловать в Forma!");
     } catch (e) {
@@ -185,6 +222,7 @@ export default function App() {
     { name: "Бренд", icon: Palette },
     { name: "Мои загрузки", icon: Image },
     { name: "Общие проекты", icon: Users },
+    { name: "Настройки", icon: Settings },
   ];
   const go = (s: string) => {
     setSection(s);
@@ -205,6 +243,8 @@ export default function App() {
         .toLowerCase()
         .includes(query.toLowerCase()),
   );
+  async function localLogout(){const id=identity.current.id;acceptUser(null);setActive(null);setProjects([]);history.replaceState({},'', '/');const clearing=forgetUser(id||undefined,true).catch(()=>{});logoutTask.current=api('/auth/logout',json({})).then(()=>clearSignOutPending()).catch(e=>{if(e.status===401)clearSignOutPending()});await Promise.all([clearing,logoutTask.current]);}
+  if(publicToken)return <Suspense fallback={<div className="editor-loading">Открываем публикацию…</div>}><PublicDesign token={publicToken}/></Suspense>;
   if (active && user)
     return (
       <>
@@ -309,14 +349,7 @@ export default function App() {
           </div>
           <button
             className="account"
-            onClick={() =>
-              user
-                ? api("/auth/logout", json({})).then(() => {
-                    setUser(null);
-                    history.replaceState({}, "", "/");
-                  })
-                : setAuth(true)
-            }
+            onClick={()=>user?void localLogout():setAuth(true)}
           >
             <span className="avatar">{user?.name[0].toUpperCase() || "Г"}</span>
             <span>
@@ -363,6 +396,7 @@ export default function App() {
             </button>
           </div>
         </header>
+        {!online&&<div className="offline-banner" role="status">Нет подключения. Открытые ранее проекты доступны из локальной копии; правки сохраняются на устройстве и синхронизируются после подключения.</div>}
         <main>
           {section === "Главная" && (
             <>
@@ -788,14 +822,16 @@ export default function App() {
                           "PUT",
                         ),
                       );
-                      setUser({
+                      if(identity.current.id!==user!.id)return;
+                      const updated={
                         ...user!,
                         brand: {
                           name: brandName,
                           colors: brandColors,
                           font: brandFont,
                         },
-                      });
+                      };
+                      rememberUser(updated);acceptUser(updated);
                       toast("Бренд-набор сохранён");
                     } catch (e) {
                       toast((e as Error).message);
@@ -871,6 +907,7 @@ export default function App() {
               </div>
             </section>
           )}
+          {section==='Настройки'&&(user?<AccountSettings user={user} onUserChange={u=>{if(identity.current.id===u.id){rememberUser(u);acceptUser(u)}}} onLogout={()=>void localLogout()} toast={toast}/>:<div className="empty-state"><h2>Войдите в аккаунт</h2><button className="primary" onClick={()=>setAuth(true)}>Войти</button></div>)}
           {section === "Мои загрузки" && (
             <MediaLibrary user={user} requireUser={requireUser} toast={toast} />
           )}
@@ -926,6 +963,7 @@ export default function App() {
                 required
               />
             </label>
+            {!register&&<label>Код двухфакторной защиты<input name="twoFactorCode" inputMode="text" autoComplete="one-time-code" placeholder="Код приложения или восстановления"/></label>}
             {error && <div className="error-box">{error}</div>}
             <button className="primary" disabled={busy}>
               {busy ? "Подождите…" : register ? "Создать аккаунт" : "Войти"}

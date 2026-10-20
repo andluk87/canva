@@ -1,6 +1,9 @@
 import express from "express";
 import { createServer } from "node:http";
 import { createRealtime } from "./realtime.mjs";
+import {registerBulk} from "./bulk.mjs";
+import {registerPublications} from "./publications.mjs";
+import {registerAccounts} from "./accounts.mjs";
 import { DatabaseSync } from "node:sqlite";
 import {
   randomBytes,
@@ -88,12 +91,12 @@ export function createApp({
       return err(res, 429, "Слишком много попыток. Повторите через 15 минут.");
     next();
   };
-  const login = (res, u) => {
+  const login = (req,res, u) => {
     const token = randomBytes(32).toString("hex");
-    db.prepare("INSERT INTO sessions VALUES(?,?,?)").run(
+    db.prepare("INSERT INTO sessions(token,user_id,expires,created,user_agent) VALUES(?,?,?,?,?)").run(
       sha(token),
       u.id,
-      Date.now() + 604800000,
+      Date.now() + 604800000,Date.now(),String(req.headers["user-agent"]||"").slice(0,300),
     );
     res.cookie("forma_session", token, {
       httpOnly: true,
@@ -107,7 +110,7 @@ export function createApp({
   app.get("/api/health", (_, res) =>
     res.json({
       status: "ok",
-      version: "0.2.0",
+      version: "0.3.0",
       database: !!db.prepare("SELECT 1").get(),
     }),
   );
@@ -142,7 +145,7 @@ export function createApp({
         `${salt}:${hash}`,
         now(),
       );
-      login(res, db.prepare("SELECT * FROM users WHERE id=?").get(uid));
+      login(req,res, db.prepare("SELECT * FROM users WHERE id=?").get(uid));
     } catch (e) {
       if (String(e).includes("UNIQUE"))
         return err(res, 409, "Этот email уже зарегистрирован");
@@ -164,7 +167,8 @@ export function createApp({
     const check = scryptSync(password, salt, 64);
     if (!u || !timingSafeEqual(check, Buffer.from(hash, "hex")))
       return err(res, 401, "Неверный email или пароль");
-    login(res, u);
+    if(!accounts.verifyLogin(req,res,u))return;
+    login(req,res, u);
   });
   app.post("/api/auth/logout", auth, (req, res) => {
     const token = (req.headers.cookie || "")
@@ -269,6 +273,9 @@ export function createApp({
     );
   }
   const realtime = createRealtime(db, validDocument);
+  const accounts=registerAccounts(app,{db,auth,realtime,safeUser});
+  registerBulk(app,{db,auth,access,write,validDocument});
+  registerPublications(app,{db,auth,access,owner,validDocument});
   app.get("/api/projects", auth, (req, res) => {
     const ps = db
       .prepare(

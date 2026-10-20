@@ -7,6 +7,7 @@ RUN --mount=type=secret,id=cloud_ca,required=false \
     npm ci --no-audit --no-fund --fetch-retries=0 --fetch-timeout=30000
 COPY index.html tsconfig.json vite.config.ts ./
 COPY src ./src
+COPY public ./public
 COPY shared ./shared
 RUN npm run build && npm prune --offline --omit=dev --ignore-scripts
 

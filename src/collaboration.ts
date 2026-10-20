@@ -1,4 +1,5 @@
 import * as Y from "yjs";
+import {getDocument,putDocument,cacheGeneration} from "./offline/store.mjs";
 import {
   readSnapshot,
   writeSnapshot,
@@ -13,6 +14,7 @@ export type Peer = {
 };
 type Options = {
   projectId: string;
+  userId: string;
   onSnapshot: (state: Snapshot) => void;
   onStatus: (status: string) => void;
   onPeers: (peers: Peer[], self: string) => void;
@@ -29,7 +31,7 @@ const encode = (bytes: Uint8Array) => {
 const decode = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 export class Collaboration {
   doc = new Y.Doc();
-  undoManager: Y.UndoManager;
+  undoManager!: Y.UndoManager;
   view: Snapshot = { title: "", pages: [] };
   ready = false;
   connected = false;
@@ -50,6 +52,13 @@ export class Collaboration {
   private syncing = false;
   private lastUpdate: Uint8Array | null = null;
   private thumbnail: string | undefined;
+  private localVersion=0;
+  private persistedVersion=-1;
+  private persistence:Promise<void>=Promise.resolve();
+  private storageFailed=false;
+  private cacheReady=false;
+  private cacheGeneration:number;
+  private online=()=>{if(!this.connected&&!this.stopped&&!this.denied){if(this.timer)clearTimeout(this.timer);this.connect()}};
   private waiters: {
     seq: number;
     resolve: () => void;
@@ -57,27 +66,62 @@ export class Collaboration {
   }[] = [];
   constructor(options: Options) {
     this.options = options;
+    this.cacheGeneration=cacheGeneration(options.userId);
+    this.bindDocument();
+    addEventListener('online',this.online);
+    void this.initialize();
+  }
+  private bindDocument(){
     this.undoManager = new Y.UndoManager(
       [this.doc.getMap("project"), this.doc.getMap("pages")],
       { trackedOrigins: new Set([this.localOrigin]), captureTimeout: 350 },
     );
-    this.undoManager.on("stack-item-added", () => options.onHistory());
-    this.undoManager.on("stack-item-popped", () => options.onHistory());
+    this.undoManager.on("stack-item-added", () => this.options.onHistory());
+    this.undoManager.on("stack-item-popped", () => this.options.onHistory());
     this.doc.on("update", (update: Uint8Array, origin: unknown) => {
-      if (origin === "server") return;
+      if (origin === "server"||origin === "restore") return;
       this.lastUpdate = this.lastUpdate
         ? Y.mergeUpdates([this.lastUpdate, update])
         : update;
       this.pending = true;
-      options.onStatus(
-        this.connected ? "Сохраняем…" : "Нет связи — изменения в этой вкладке",
+      this.options.onStatus(
+        this.connected ? "Сохраняем…" : "Офлайн — сохраняем на устройство…",
       );
+      void this.persistLocal();
       if (this.ready && !this.syncing) this.sendPending();
       if (origin === this.undoManager)
-        options.onSnapshot(readSnapshot(this.doc));
+        this.options.onSnapshot(readSnapshot(this.doc));
     });
-    this.connect();
   }
+  private async initialize(){
+    try{
+      const cached=await getDocument(this.options.userId,this.options.projectId);
+      if(this.stopped)return;
+      this.cacheReady=true;
+      if(cached?.state){
+        Y.applyUpdate(this.doc,new Uint8Array(cached.state),'restore');
+        const state=readSnapshot(this.doc);
+        if(!state.pages.length)throw new Error('Пустой локальный документ');
+        this.epoch=cached.epoch;this.role=cached.role;this.revision=cached.revision;this.pending=cached.pending;
+        this.ready=true;this.persistedVersion=this.localVersion;
+        this.options.onRole(this.role);this.options.onSnapshot(state);
+        this.options.onStatus(this.pending?'Офлайн — сохранено на устройстве':'Локальная копия — подключаемся…');
+      }
+    }catch{this.options.onError('Локальная копия недоступна. Не закрывайте несохранённый проект.');}
+    if(!this.stopped)this.connect();
+  }
+  private persistLocal():Promise<void>{
+    if(this.stopped)return Promise.resolve();
+    const version=++this.localVersion;
+    const record={state:Y.encodeStateAsUpdate(this.doc),epoch:this.epoch,role:this.role,revision:this.revision,pending:this.pending};
+    this.persistence=this.persistence.catch(()=>{}).then(async()=>{
+      try{await putDocument(this.options.userId,this.options.projectId,record,this.cacheGeneration);this.cacheReady=true;this.storageFailed=false;this.persistedVersion=version;
+        if(!this.stopped&&!this.connected&&version===this.localVersion)this.options.onStatus('Офлайн — сохранено на устройстве');
+      }catch{this.storageFailed=true;if(!this.stopped){this.options.onStatus('Ошибка сохранения на устройство');this.options.onError('Не удалось записать локальные изменения. Освободите место или экспортируйте JSON.');}}
+    });
+    return this.persistence;
+  }
+  get durable(){return this.cacheReady&&!this.storageFailed&&this.persistedVersion===this.localVersion;}
   private connect() {
     if (this.stopped || this.denied) return;
     const url = new URL(
@@ -93,7 +137,8 @@ export class Collaboration {
       try {
         const m = JSON.parse(e.data);
         if (m.type === "hello") {
-          if (this.epoch && this.epoch !== m.epoch) {
+          if(this.epoch&&this.epoch!==m.epoch&&!this.pending){this.undoManager.destroy();this.doc.destroy();this.doc=new Y.Doc();this.view={title:'',pages:[]};this.bindDocument();}
+          if (this.epoch && this.epoch !== m.epoch && this.pending) {
             this.denied = true;
             this.options.onRole("viewer");
             this.options.onError(
@@ -126,6 +171,7 @@ export class Collaboration {
             this.sendPending();
           } else this.options.onStatus("Сохранено");
           this.options.onSnapshot(readSnapshot(this.doc));
+          void this.persistLocal();
         } else if (m.type === "update") {
           this.revision = m.revision;
           let changed = false;
@@ -136,7 +182,7 @@ export class Collaboration {
           } finally {
             this.doc.off("update", track);
           }
-          if (changed) this.options.onSnapshot(readSnapshot(this.doc));
+          if (changed) {this.options.onSnapshot(readSnapshot(this.doc));void this.persistLocal();}
         } else if (m.type === "ack") {
           this.revision = m.revision;
           this.acknowledged = Math.max(this.acknowledged, m.seq);
@@ -150,12 +196,14 @@ export class Collaboration {
           if (this.acknowledged === this.seq && !this.lastUpdate) {
             this.pending = false;
             this.options.onStatus("Сохранено");
+            void this.persistLocal();
           }
         } else if (m.type === "presence")
           this.options.onPeers(m.peers, this.self);
         else if (m.type === "role") {
           this.role = m.role;
           this.options.onRole(m.role);
+          void this.persistLocal();
           if (m.role === "viewer" && this.pending) {
             this.denied = true;
             this.options.onError(
@@ -193,7 +241,7 @@ export class Collaboration {
       }
       this.options.onStatus(
         this.pending
-          ? "Нет связи — изменения в этой вкладке"
+          ? (this.durable?"Офлайн — сохранено на устройстве":"Офлайн — сохраняем на устройство…")
           : "Переподключаемся…",
       );
       this.timer = setTimeout(
@@ -242,10 +290,7 @@ export class Collaboration {
   }
   async flush() {
     if (this.denied) throw new Error("Доступ к совместной сессии закрыт");
-    if (!this.connected)
-      throw new Error(
-        "Нет связи. Изменения пока находятся только в этой вкладке.",
-      );
+    if(!this.connected){await this.persistLocal();if(!this.durable)throw new Error('Нет связи и не удалось сохранить копию на устройство.');return;}
     this.sendPending();
     if (!this.pending) return;
     const seq = this.seq;
@@ -296,6 +341,7 @@ export class Collaboration {
   }
   destroy() {
     this.stopped = true;
+    removeEventListener('online',this.online);
     if (this.timer) clearTimeout(this.timer);
     this.socket?.close();
     this.rejectWaiters("Редактор закрыт");
