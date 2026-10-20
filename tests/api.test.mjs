@@ -393,3 +393,8 @@ test("reject cross-origin mutations", async () => {
     403,
   );
 });
+
+test('AT-16 slide notes and transitions persist while invalid metadata is rejected',async()=>{
+ const document={pages:[{id:'slide-meta',notes:'Private notes\nSecond line',transition:'fade',canvas:{objects:[],background:'#ffffff'}}]};const made=await request('/projects',{cookie:alice,method:'POST',body:{title:'Slide metadata',width:1280,height:720,document}});assert.equal(made.status,201);const id=made.data.project.id;assert.deepEqual((await request('/projects/'+id,{cookie:alice})).data.project.document,document);
+ for(const patch of [{notes:'x'.repeat(10001)},{notes:45},{transition:'arbitrary-animation'},{transition:{type:'fade'}}]){const bad=structuredClone(document);Object.assign(bad.pages[0],patch);assert.equal((await request('/projects/'+id,{cookie:alice,method:'PUT',body:{revision:1,document:bad}})).status,400);}assert.equal((await request('/projects/'+id,{cookie:alice})).data.project.revision,1);
+});

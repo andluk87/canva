@@ -57,6 +57,11 @@ import { api, json, Project, User, DesignPage, uid } from "./api";
 import { templates, templateDocument } from "./templates";
 import { Modal, Artwork } from "./ui";
 import AdvancedTools from './advanced/AdvancedTools';
+import ImageTools from './image-tools/ImageTools';
+import DataTools from './data-tools/DataTools';
+import PersonalTemplates from './PersonalTemplates';
+import SlideSettings from './presentation/SlideSettings';
+import PresentationViewer from './presentation/PresentationViewer';
 import BulkCreate from './BulkCreate';
 import PublishDesign from './PublishDesign';
 import {cacheProject} from './offline/cache';
@@ -65,6 +70,7 @@ import { Collaboration, type Peer } from "./collaboration";
 import type { Snapshot } from "../shared/collaboration.mjs";
 FabricObject.customProperties = [
   "id",
+  "formaData",
   "lockMovementX",
   "lockMovementY",
   "lockScalingX",
@@ -77,12 +83,15 @@ export default function Editor({
   user,
   onExit,
   toast,
+  onOpenProject,
 }: {
   project: Project;
   user: User;
   onExit: () => void;
   toast: (s: string) => void;
+  onOpenProject:(p:Project)=>void;
 }) {
+  const [presentationIndex,setPresentationIndex]=useState(0);
   const localGeneration=useRef(cacheGeneration(user.id));
   const canvasEl = useRef<HTMLCanvasElement>(null),
     canvas = useRef<Canvas | null>(null),
@@ -589,6 +598,7 @@ export default function Editor({
     const keyboard = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
       if (
+        document.querySelector('[role="dialog"][aria-modal="true"]') ||
         ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName) ||
         target.isContentEditable ||
         (canvas.current?.getActiveObject() as any)?.isEditing
@@ -678,12 +688,7 @@ export default function Editor({
   async function addPage(copy = false) {
     if (readOnly || loading.current || pagesRef.current.length >= 100) return;
     capture();
-    const p = {
-      id: uid(),
-      canvas: copy
-        ? clone(pagesRef.current[pageIndex.current].canvas)
-        : { version: "6.7.1", objects: [], background: "#ffffff" },
-    };
+    const p:DesignPage = copy ? {...clone(pagesRef.current[pageIndex.current]),id:uid()} : {id:uid(),canvas:{ version:"6.7.1", objects:[], background:"#ffffff" }};
     pagesRef.current.splice(pageIndex.current + 1, 0, p);
     setPages([...pagesRef.current]);
     await switchPage(pageIndex.current + 1);
@@ -773,6 +778,9 @@ export default function Editor({
           ),
           safeName + ".json",
         );
+      } else if(exportType==='pptx'){
+        const {exportPptx}=await import('./presentation/exportPptx');
+        download(await exportPptx({pages:clone(pagesRef.current),width:project.width,height:project.height,title:titleRef.current}),safeName+'.pptx');
       } else if (exportType === "pdf") {
         const { jsPDF } = await import("jspdf");
         const pdf = new jsPDF({
@@ -885,7 +893,7 @@ export default function Editor({
     selected?.type === "textbox" || selected?.type === "i-text";
   const objects = c?.getObjects() || [];
   return (
-    <div className={"editor " + (presentation ? "presenting" : "")}>
+    <div className="editor">
       <header className="editor-header">
         <button
           className="editor-back"
@@ -985,7 +993,7 @@ export default function Editor({
         </button>
         <button
           className="secondary compact"
-          onClick={() => setPresentation(true)}
+          onClick={() => {capture();setPresentationIndex(pageIndex.current);setPresentation(true)}}
         >
           <Play size={15} />
           <span>Просмотр</span>
@@ -1017,6 +1025,10 @@ export default function Editor({
             { name: "Фон", icon: Palette },
             { name: "Слои", icon: Layers },
             { name: "Инструменты", icon: SlidersHorizontal },
+            { name: "Фото", icon: Image },
+            { name: "Данные", icon: FileSpreadsheet },
+            { name: "Слайды", icon: Play },
+            { name: "Мои шаблоны", icon: LayoutTemplate },
           ].map((n) => (
             <button
               key={n.name}
@@ -1041,6 +1053,11 @@ export default function Editor({
               </button>
             </div>
             {tab==='Инструменты'&&c&&<AdvancedTools canvas={c} selected={selected} readOnly={readOnly} onChange={record} toast={toast} width={project.width} height={project.height} tick={tick}/>}
+            {tab==='Фото'&&c&&<ImageTools canvas={c} selected={selected} readOnly={readOnly} onChange={record} toast={toast} tick={tick}/>}
+            {tab==='Данные'&&c&&<DataTools canvas={c} selected={selected} readOnly={readOnly} width={project.width} height={project.height} onChange={record} toast={toast} tick={tick}/>}
+            {tab==='Слайды'&&<><SlideSettings page={pages[page]} readOnly={readOnly} onChange={patch=>{if(readOnly)return;Object.assign(pagesRef.current[pageIndex.current],patch);setPages([...pagesRef.current]);record();}}/><button className="secondary full" onClick={()=>{capture();setPresentationIndex(0);setPresentation(true)}}>Показать с первого слайда</button></>}
+            {tab==='Мои шаблоны'&&<PersonalTemplates projectId={project.id} readOnly={readOnly} beforeSave={async()=>{await save();return !!live.current?.connected&&!live.current.pending}} onCreated={async p=>{await save();if(live.current?.pending&&!live.current.durable){toast('Новый дизайн создан. Сохраните текущие изменения перед переходом.');return;}onOpenProject(p)}} toast={toast}/>}
+
             {tab === "Шаблоны" && (
               <>
                 <p className="muted small">
@@ -1760,17 +1777,19 @@ export default function Editor({
           {modal === "Скачать дизайн" && (
             <>
               <p className="muted">
-                PNG и JPG — текущая страница. PDF и JSON — весь проект.
+                PNG и JPG — текущая страница. PDF, PPTX и JSON — весь проект.
               </p>
               <label>
                 Формат файла
                 <select
                   value={exportType}
+                  aria-label="Формат файла"
                   onChange={(e) => setExportType(e.target.value)}
                 >
                   <option value="png">PNG — высокое качество</option>
                   <option value="jpg">JPG — фотография</option>
                   <option value="pdf">PDF — все страницы</option>
+                  <option value="pptx">PPTX — презентация</option>
                   <option value="json">JSON — редактируемый документ</option>
                 </select>
               </label>
@@ -2004,30 +2023,8 @@ export default function Editor({
           )}
         </Modal>
       )}
-      {presentation && (
-        <div className="presentation-controls">
-          <button
-            className="secondary"
-            onClick={() => switchPage(page - 1)}
-            disabled={page === 0}
-          >
-            ←
-          </button>
-          <span>
-            {page + 1} / {pages.length}
-          </span>
-          <button
-            className="secondary"
-            onClick={() => switchPage(page + 1)}
-            disabled={page === pages.length - 1}
-          >
-            →
-          </button>
-          <button className="secondary" onClick={() => setPresentation(false)}>
-            Закрыть <X size={16} />
-          </button>
-        </div>
-      )}
+      {presentation&&<PresentationViewer pages={clone(pagesRef.current)} width={project.width} height={project.height} title={title} initialIndex={presentationIndex} onClose={()=>setPresentation(false)}/>}
+
     </div>
   );
 }

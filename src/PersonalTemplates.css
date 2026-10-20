@@ -1,0 +1,71 @@
+.personal-templates { max-width: 1200px; margin: 0 auto; color: #302b3e; }
+.personal-intro { display: flex; align-items: flex-start; gap: 14px; margin-bottom: 25px; }
+.personal-symbol { width: 48px; height: 48px; background: #f0eaff; border-radius: 14px; color: #7048ed; display: grid; place-items: center; flex-shrink: 0; }
+.personal-intro h2 { font-size: 23px; letter-spacing: -.6px; margin: 2px 0 8px; }
+.personal-intro p { color: #898293; margin: 0; font-size: 13px; line-height: 1.7; }
+.personal-save { background: #faf8ff; border: 1px solid #e8e0f8; padding: 17px 20px; border-radius: 14px; margin-bottom: 28px; }
+.personal-save > summary { cursor: pointer; font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 8px; color: #714ac7; }
+.personal-save > summary::-webkit-details-marker { display: none; }
+.personal-save form { margin-top: 18px; display: grid; grid-template-columns: 1.1fr 1fr .7fr; gap: 13px; align-items: end; }
+.personal-save form > .personal-help, .personal-save form > .personal-error { grid-column: 1 / -1; }
+.personal-save form > button { width: fit-content; padding: 10px 16px; font-size: 12px; }
+.personal-save label, .personal-dialog label:not(.personal-checkbox) { display: grid; gap: 7px; font-size: 12px; color: #635a73; font-weight: 600; min-width: 0; }
+.personal-save input, .personal-save select, .personal-dialog input:not([type=checkbox]) { width: 100%; min-width: 0; box-sizing: border-box; border: 1px solid #ded5ed; border-radius: 8px; height: 40px; background: white; color: #3d354e; padding: 0 11px; font: inherit; font-size: 12px; outline: none; }
+.personal-save input:focus, .personal-save select:focus, .personal-dialog input:focus { border-color: #9f7cee; box-shadow: 0 0 0 3px #7048ed0d; }
+.personal-help { color: #93879f; font-size: 11px; line-height: 1.7; margin: 0; font-weight: 400; }
+.personal-source-caption { grid-column: 1 / -1; margin: 0; display: flex; align-items: center; gap: 6px; font-size: 12px; color: #8a789e; }
+.personal-library-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 15px; }
+.personal-library-heading h3 { margin: 0; font-size: 17px; letter-spacing: -.3px; }
+.personal-library-heading h3 span { font-size: 11px; font-weight: 500; display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 22px; border-radius: 6px; background: #f1ecfa; color: #9574c6; margin-left: 7px; }
+.personal-icon { border: 1px solid #e8e2ef; border-radius: 7px; background: white; color: #9a8da8; width: 30px; height: 30px; display: inline-grid; place-items: center; cursor: pointer; padding: 0; flex-shrink: 0; }
+.personal-icon:hover { color: #7048ed; background: #f7f3ff; }
+.personal-delete:hover { color: #c75671; background: #fff3f5; }
+.personal-filters { display: flex; gap: 10px; margin-bottom: 20px; }
+.personal-search { display: flex; align-items: center; gap: 9px; flex: 1; min-width: 0; border: 1px solid #e8e2ef; border-radius: 9px; padding: 10px 12px; color: #b6acbf; background: white; }
+.personal-search input { width: 100%; border: 0; padding: 0; font: inherit; font-size: 12px; background: transparent; outline: none; min-width: 0; }
+.personal-filters > select { max-width: 240px; min-width: 150px; border: 1px solid #e8e2ef; border-radius: 9px; padding: 10px; background: white; color: #7f738e; font-size: 12px; }
+.personal-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 20px; }
+.personal-card { border: 1px solid #ece6f2; background: white; border-radius: 13px; overflow: hidden; min-width: 0; }
+.personal-preview { width: 100%; max-height: 240px; min-height: 150px; position: relative; background: linear-gradient(145deg,#e8e1fc,#f6f0ff 65%,#eee2f4); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; overflow: hidden; }
+.personal-preview > span { color: #c0ace4; }
+.personal-preview > b { font-family: Georgia,serif; font-size: 24px; max-width: 80%; text-align: center; line-height: 1.3; color: #9c7bca; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.personal-preview > img { width: 100%; height: 100%; object-fit: contain; position: absolute; inset: 0; }
+.personal-preview > small { position: absolute; right: 9px; bottom: 9px; background: #ffffffdf; color: #8e7d9f; border: 1px solid #f3edf8; font-size: 10px; font-weight: 600; padding: 4px 7px; border-radius: 5px; }
+.personal-card-content { padding: 15px; }
+.personal-category { font-size: 9px; letter-spacing: .5px; text-transform: uppercase; color: #ae9abd; }
+.personal-card h4 { margin: 6px 0 5px; font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.personal-card-content > p { font-size: 10px; color: #a395ae; margin: 0; }
+.personal-card-actions { display: flex; gap: 7px; align-items: center; margin-top: 15px; }
+.personal-use { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid #e4d9f6; background: #f8f4ff; color: #8d67c6; padding: 7px 8px; border-radius: 7px; height: 30px; font-size: 11px; font-weight: 600; cursor: pointer; }
+.personal-use:hover { background: #f0e8ff; }
+.personal-templates button:disabled { opacity: .5; cursor: default; }
+.personal-empty { padding: 40px 22px; text-align: center; color: #b7a8c6; background: #faf8fd; border: 1px dashed #e8deef; border-radius: 12px; font-size: 12px; }
+.personal-empty h3 { color: #9583a8; margin: 15px 0 8px; font-size: 15px; }
+.personal-empty p { color: #a596b4; font-size: 12px; line-height: 1.7; }
+.personal-usage { text-align: right; font-size: 10px; color: #b5a6c2; margin: 18px 0 0; }
+.personal-error { background: #fff2f4; border: 1px solid #f3dce2; padding: 11px 13px; border-radius: 8px; font-size: 12px; color: #b95770; line-height: 1.6; margin: 12px 0; }
+.personal-error button { background: transparent; color: inherit; border: 0; padding: 0; text-decoration: underline; font-size: inherit; cursor: pointer; }
+.personal-dialog { padding: 0 24px 24px; display: grid; gap: 18px; }
+.personal-dialog-description { font-size: 13px; line-height: 1.8; color: #8a7b99; margin: 0; }
+.personal-checkbox { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #8d789e; line-height: 1.5; }
+.personal-checkbox input { accent-color: #7048ed; flex-shrink: 0; }
+.personal-dialog-actions { display: flex; gap: 10px; align-items: center; justify-content: flex-end; }
+.personal-dialog-actions button { padding: 10px 14px; border-radius: 8px; font-size: 12px; cursor: pointer; }
+.personal-secondary { border: 1px solid #e5dbee; background: white; color: #9680a7; font-weight: 600; }
+.personal-remove { border: 1px solid #f2dce2; background: #fff6f8; color: #bc607a; font-weight: 600; }
+.personal-templates-editor { width: 100%; }
+.personal-templates-editor .personal-intro { gap: 10px; margin-bottom: 18px; }
+.personal-templates-editor .personal-symbol { width: 35px; height: 35px; border-radius: 10px; }
+.personal-templates-editor .personal-intro h2 { font-size: 16px; margin-top: 0; }
+.personal-templates-editor .personal-intro p { font-size: 11px; }
+.personal-templates-editor .personal-save { padding: 13px; }
+.personal-templates-editor .personal-save form { grid-template-columns: 1fr; gap: 12px; }
+.personal-templates-editor .personal-save > summary { font-size: 11px; }
+.personal-templates-editor .personal-grid { grid-template-columns: 1fr; gap: 15px; }
+.personal-templates-editor .personal-filters { flex-direction: column; }
+.personal-templates-editor .personal-filters > select { width: 100%; max-width: none; }
+.personal-templates-editor .personal-library-heading h3 { font-size: 14px; }
+.personal-templates-editor .personal-preview { min-height: 135px; max-height: 190px; }
+.personal-templates-editor .personal-usage { text-align: left; line-height: 1.7; }
+@media(max-width: 1050px) { .personal-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } .personal-save form { grid-template-columns: 1fr 1fr; } }
+@media(max-width: 560px) { .personal-grid { grid-template-columns: 1fr; } .personal-intro h2 { font-size: 19px; } .personal-save { padding: 14px; } .personal-save form { grid-template-columns: 1fr; } .personal-filters { flex-direction: column; } .personal-filters > select { max-width: none; } .personal-dialog { padding: 0 18px 20px; } }

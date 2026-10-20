@@ -1,0 +1,97 @@
+.forma-presentation {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  overflow: hidden;
+  background: #111019;
+  color: #f7f5ff;
+  font: 14px/1.5 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  isolation: isolate;
+}
+
+.forma-presentation:focus { outline: none; }
+.forma-presentation:fullscreen { width: 100vw; height: 100vh; }
+.forma-presentation * { box-sizing: border-box; }
+.forma-presentation__header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 18px;
+  min-height: 78px;
+  padding: 13px 24px;
+  background: #191722;
+  border-bottom: 1px solid #ffffff0c;
+}
+.forma-presentation__heading { flex: 1; min-width: 0; }
+.forma-presentation__eyebrow { color: #b1a2d7; font-size: 9px; font-weight: 700; letter-spacing: .15em; }
+.forma-presentation__heading h1 { margin: 2px 0 0; overflow: hidden; font-size: 16px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.forma-presentation__elapsed { display: flex; align-items: center; gap: 7px; color: #c0bacf; font-variant-numeric: tabular-nums; font-size: 13px; }
+.forma-presentation button { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; gap: 7px; min-width: 40px; min-height: 40px; padding: 8px; border: 1px solid transparent; border-radius: 9px; background: transparent; color: #eeeaf9; font: inherit; cursor: pointer; transition: background .15s, border-color .15s; }
+.forma-presentation button:hover:not(:disabled) { background: #ffffff12; filter: none; }
+.forma-presentation button[aria-pressed="true"] { background: #8c68ec35; border-color: #a88ae666; color: #dacaff; }
+.forma-presentation button:focus-visible { outline: 3px solid #c6b1ff; outline-offset: 2px; }
+.forma-presentation button:disabled { opacity: .3; cursor: not-allowed; }
+.forma-presentation__stage { position: relative; flex: 1 1 auto; width: 100%; max-width: none; min-height: 0; margin: 0; padding: 0; overflow: hidden; background: #111019; }
+.forma-presentation__slides, .forma-presentation__frame { position: absolute; inset: 0; }
+.forma-presentation__frame { display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.forma-presentation__artwork { flex-shrink: 0; overflow: hidden; background: white; box-shadow: 0 12px 60px #0008; pointer-events: none; }
+.forma-presentation__artwork canvas { display: block; max-width: none; }
+.forma-presentation__artwork--ready[data-transition="fade"] { animation: forma-presentation-fade .35s ease-out both; }
+.forma-presentation__artwork--ready[data-transition="slide"] { --forma-slide-offset: 6%; animation: forma-presentation-slide .38s cubic-bezier(.2,.7,.3,1) both; }
+.forma-presentation__artwork--ready[data-transition="slide"][data-direction="backward"] { --forma-slide-offset: -6%; }
+.forma-presentation__message { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; max-width: 620px; margin: auto; padding: 30px; color: #c8c2d7; text-align: center; font-size: 14px; }
+.forma-presentation__message--error { color: #f5bccb; }
+.forma-presentation__blackout { position: absolute; inset: 0; z-index: 2; background: #000; }
+.forma-presentation__notes { flex: 0 0 auto; max-height: 25vh; overflow: auto; padding: 14px 26px; border-top: 1px solid #ffffff12; background: #1e1b29; }
+.forma-presentation__notes h2 { display: flex; align-items: center; gap: 7px; margin: 0 0 8px; color: #c9b7f4; font-size: 11px; font-weight: 600; }
+.forma-presentation__notes p { margin: 0; color: #e6e0ee; font-size: 14px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
+.forma-presentation__notice { flex: 0 0 auto; margin: 0; padding: 8px 24px; color: #ffdfb0; background: #3d3022; font-size: 12px; text-align: center; }
+.forma-presentation__footer { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: 18px; min-height: 72px; padding: 12px 24px; border-top: 1px solid #ffffff0c; background: #191722; }
+.forma-presentation__navigation, .forma-presentation__tools { display: flex; align-items: center; gap: 7px; }
+.forma-presentation__counter { min-width: 68px; color: #e5dff4; text-align: center; white-space: nowrap; font-variant-numeric: tabular-nums; font-size: 13px; }
+.forma-presentation__hint { margin: 0; color: #a79eb9; font-size: 11px; text-align: center; }
+.forma-presentation__tool-button { font-size: 12px !important; }
+.forma-presentation__sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; padding: 0; border: 0; clip-path: inset(50%); white-space: nowrap; }
+
+.forma-slide-settings { color: #3d354e; }
+.forma-slide-settings__intro { margin-bottom: 22px; }
+.forma-slide-settings__intro h3 { margin: 0 0 8px; color: #322941; font-size: 14px; font-weight: 650; }
+.forma-slide-settings__intro p, .forma-slide-settings__help { margin: 0; color: #82768f; font-size: 11px; line-height: 1.65; }
+.forma-slide-settings__label { display: flex; align-items: center; gap: 7px; margin: 17px 0 9px; color: #59456e; font-size: 12px; font-weight: 600; }
+.forma-slide-settings select, .forma-slide-settings textarea { width: 100%; border: 1px solid #e4dfed; border-radius: 9px; background: #fff; color: #443650; font: inherit; font-size: 12px; }
+.forma-slide-settings select { padding: 11px; }
+.forma-slide-settings textarea { min-height: 200px; padding: 12px; line-height: 1.6; resize: vertical; }
+.forma-slide-settings select:focus-visible, .forma-slide-settings textarea:focus-visible { outline: 2px solid #9270de; outline-offset: 2px; }
+.forma-slide-settings select:disabled, .forma-slide-settings textarea:disabled { opacity: .65; cursor: not-allowed; background: #f6f3fa; }
+.forma-slide-settings__help { margin-top: 8px; }
+.forma-slide-settings__notes-meta { display: flex; justify-content: space-between; gap: 8px; margin-top: 6px; color: #8c8098; font-size: 9px; line-height: 1.5; }
+.forma-slide-settings__notes-meta span:last-child { flex-shrink: 0; font-variant-numeric: tabular-nums; }
+.forma-slide-settings__readonly { margin-top: 17px; padding: 10px 12px; border: 1px solid #e9e3f0; border-radius: 8px; background: #f6f2fc; color: #806d94; font-size: 11px; line-height: 1.6; }
+
+@keyframes forma-presentation-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes forma-presentation-slide { from { opacity: .25; transform: translateX(var(--forma-slide-offset, 6%)); } to { opacity: 1; transform: translateX(0); } }
+@media (max-width: 900px) {
+  .forma-presentation__hint { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .forma-presentation__footer { gap: 8px; }
+}
+@media (max-width: 560px) {
+  .forma-presentation__header { min-height: 66px; padding: 10px 13px; gap: 9px; }
+  .forma-presentation__heading h1 { font-size: 14px; }
+  .forma-presentation__elapsed { gap: 4px; font-size: 11px; }
+  .forma-presentation__footer { min-height: 66px; padding: 10px 12px; }
+  .forma-presentation__tools, .forma-presentation__navigation { gap: 2px; }
+  .forma-presentation__counter { min-width: 55px; font-size: 12px; }
+  .forma-presentation__tool-button span { display: none; }
+  .forma-presentation__notes { padding: 12px 17px; }
+  .forma-presentation__notes p { font-size: 12px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .forma-presentation button { transition: none; }
+  .forma-presentation__artwork--ready[data-transition] { animation: none; }
+}

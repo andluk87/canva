@@ -1,6 +1,11 @@
 import * as Y from "yjs";
 const copy = (value) => JSON.parse(JSON.stringify(value));
 const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const pageFields=['notes','transition'];
+function pageMetadata(page){
+  const legacy=page.get('metadata')?.toJSON()||{};
+  return Object.fromEntries(pageFields.map(key=>[key,page.has(key)?page.get(key):legacy[key]]).filter(([,value])=>value!==null&&value!==undefined));
+}
 export function normalize(snapshot) {
   const result = copy(snapshot);
   for (const page of result.pages) {
@@ -43,6 +48,10 @@ export function writeSnapshot(
       }
       if (!old || previous.pages.findIndex((p) => p.id === page.id) !== index)
         node.set("position", index);
+      // Existing page maps are shared already. Concurrently creating a nested
+      // metadata map in legacy documents could replace another editor's notes.
+      // Null explicitly clears an older nested value without resurrecting it.
+      for(const key of pageFields)if(!equal(page[key],old?.[key]))node.set(key,page[key]===undefined?null:copy(page[key]));
       const { objects, ...meta } = page.canvas,
         { objects: oldObjects = [], ...oldMeta } = old?.canvas || {};
       fields(node.get("canvas"), meta, oldMeta);
@@ -77,6 +86,7 @@ export function readSnapshot(doc) {
     title: doc.getMap("project").get("title") || "Новый дизайн",
     pages: ordered(doc.getMap("pages")).map(([id, p]) => ({
       id,
+      ...pageMetadata(p),
       canvas: {
         ...p.get("canvas").toJSON(),
         objects: ordered(p.get("objects")).map(([, o]) =>

@@ -25,7 +25,7 @@ export type User = {
   email: string;
   brand: { name?: string; colors?: string[]; font?: string };
 };
-export type DesignPage = { id: string; canvas: any };
+export type DesignPage = { id: string; canvas: any;notes?:string;transition?:'none'|'fade'|'slide' };
 export type Project = {
   id: string;
   title: string;

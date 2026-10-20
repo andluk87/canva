@@ -30,6 +30,7 @@ import { formats, templates, Template, templateDocument } from "./templates";
 const Editor = lazy(() => import("./Editor"));
 import { Modal, Artwork } from "./ui";
 import AccountSettings from './AccountSettings';
+import PersonalTemplates from './PersonalTemplates';
 import {clearUserData} from './offline/store.mjs';
 import {cachedUser,rememberUser,forgetUser,signOutPending,clearSignOutPending,cacheProject,cachedProject,cachedProjects,cacheProjects} from './offline/cache';
 const PublicDesign=lazy(()=>import('./PublicDesign'));
@@ -97,7 +98,7 @@ export default function App() {
     const onPop = () => {
       const p = new URLSearchParams(location.search).get("project");
       if (p && user) open(p);
-      else setActive(null);
+      else {navigation.current++;setActive(null);}
     };
     addEventListener("popstate", onPop);
     return () => removeEventListener("popstate", onPop);
@@ -219,12 +220,14 @@ export default function App() {
     { name: "Главная", icon: Home },
     { name: "Проекты", icon: FolderOpen },
     { name: "Шаблоны", icon: LayoutTemplate },
+    { name: "Мои шаблоны", icon: LayoutTemplate },
     { name: "Бренд", icon: Palette },
     { name: "Мои загрузки", icon: Image },
     { name: "Общие проекты", icon: Users },
     { name: "Настройки", icon: Settings },
   ];
   const go = (s: string) => {
+    navigation.current++;
     setSection(s);
     setMobile(false);
     setQuery("");
@@ -244,6 +247,8 @@ export default function App() {
         .includes(query.toLowerCase()),
   );
   async function localLogout(){const id=identity.current.id;acceptUser(null);setActive(null);setProjects([]);history.replaceState({},'', '/');const clearing=forgetUser(id||undefined,true).catch(()=>{});logoutTask.current=api('/auth/logout',json({})).then(()=>clearSignOutPending()).catch(e=>{if(e.status===401)clearSignOutPending()});await Promise.all([clearing,logoutTask.current]);}
+  const viewIdentity=identity.current,viewNavigation=navigation.current;
+  const openCreated=(p:Project)=>{if(identity.current!==viewIdentity||navigation.current!==viewNavigation||!viewIdentity.id)return;navigation.current++;void cacheProject(viewIdentity.id,p);setActive(p);history.pushState({},'', '?project='+p.id);};
   if(publicToken)return <Suspense fallback={<div className="editor-loading">Открываем публикацию…</div>}><PublicDesign token={publicToken}/></Suspense>;
   if (active && user)
     return (
@@ -252,10 +257,13 @@ export default function App() {
           fallback={<div className="editor-loading">Открываем редактор…</div>}
         >
           <Editor
+            key={active.id}
             project={active}
             user={user}
             toast={toast}
+            onOpenProject={openCreated}
             onExit={() => {
+              navigation.current++;
               setActive(null);
               history.pushState({}, "", "/");
               reload();
@@ -907,7 +915,8 @@ export default function App() {
               </div>
             </section>
           )}
-          {section==='Настройки'&&(user?<AccountSettings user={user} onUserChange={u=>{if(identity.current.id===u.id){rememberUser(u);acceptUser(u)}}} onLogout={()=>void localLogout()} toast={toast}/>:<div className="empty-state"><h2>Войдите в аккаунт</h2><button className="primary" onClick={()=>setAuth(true)}>Войти</button></div>)}
+          {section==='Мои шаблоны'&&(user?<PersonalTemplates key={user.id} onCreated={openCreated} toast={toast}/>:<div className="empty-state"><h2>Войдите, чтобы сохранять свои шаблоны</h2><button className="primary" onClick={()=>setAuth(true)}>Войти</button></div>)}
+          {section==='Настройки' &&(user?<AccountSettings user={user} onUserChange={u=>{if(identity.current.id===u.id){rememberUser(u);acceptUser(u)}}} onLogout={()=>void localLogout()} toast={toast}/>:<div className="empty-state"><h2>Войдите в аккаунт</h2><button className="primary" onClick={()=>setAuth(true)}>Войти</button></div>)}
           {section === "Мои загрузки" && (
             <MediaLibrary user={user} requireUser={requireUser} toast={toast} />
           )}

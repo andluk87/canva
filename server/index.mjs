@@ -4,6 +4,7 @@ import { createRealtime } from "./realtime.mjs";
 import {registerBulk} from "./bulk.mjs";
 import {registerPublications} from "./publications.mjs";
 import {registerAccounts} from "./accounts.mjs";
+import {registerPersonalTemplates} from "./personal-templates.mjs";
 import { DatabaseSync } from "node:sqlite";
 import {
   randomBytes,
@@ -110,7 +111,7 @@ export function createApp({
   app.get("/api/health", (_, res) =>
     res.json({
       status: "ok",
-      version: "0.3.0",
+      version: "0.4.0",
       database: !!db.prepare("SELECT 1").get(),
     }),
   );
@@ -254,6 +255,8 @@ export function createApp({
           typeof p.id === "string" &&
           p.id.length > 0 &&
           p.id.length <= 128 &&
+          (p.notes===undefined||(typeof p.notes==='string'&&p.notes.length<=10000)) &&
+          (p.transition===undefined||['none','fade','slide'].includes(p.transition)) &&
           p.canvas &&
           typeof p.canvas === "object" &&
           Array.isArray(p.canvas.objects) &&
@@ -276,6 +279,7 @@ export function createApp({
   const accounts=registerAccounts(app,{db,auth,realtime,safeUser});
   registerBulk(app,{db,auth,access,write,validDocument});
   registerPublications(app,{db,auth,access,owner,validDocument});
+  registerPersonalTemplates(app,{db,auth,access,validDocument});
   app.get("/api/projects", auth, (req, res) => {
     const ps = db
       .prepare(

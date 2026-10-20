@@ -1414,6 +1414,8 @@ main {
   flex: 1;
 }
 .editor-nav {
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: #fff;
   width: 75px;
   border-right: 1px solid #e9e4f1;
@@ -1424,6 +1426,7 @@ main {
   gap: 9px;
 }
 .editor-nav button {
+  flex-shrink: 0;
   width: 100%;
   padding: 11px 0;
   border-radius: 9px;

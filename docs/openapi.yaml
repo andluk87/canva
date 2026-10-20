@@ -1,13 +1,15 @@
 openapi: 3.1.0
 info:
   title: Forma Core API
-  version: 0.3.0
+  version: 0.4.0
   description: >-
     Session-cookie API. Project writes require matching revision; conflicts return 409.
     Mutating requests with an Origin header must match the request host or return 403.
     Public publications explicitly expose sanitized design snapshots, independently of
     project member roles. Account security secrets and recovery codes are returned
-    only by their setup or rotation operations. See README for scope limitations.
+    only by their setup or rotation operations. Personal templates are private snapshots
+    owned by the current account. Presentation notes and chart source metadata remain
+    private when publishing a sanitized design snapshot. See README for scope limitations.
 servers:
   - url: /api
 security:
@@ -106,6 +108,7 @@ components:
     Document:
       type: object
       required: [pages]
+      description: Private editable document, below 15000000 UTF-8 JSON bytes. Optional page notes and transitions are stored and synchronized with page metadata.
       properties:
         pages:
           type: array
@@ -115,14 +118,110 @@ components:
             type: object
             required: [id, canvas]
             properties:
-              id: { type: string }
+              id: { type: string, minLength: 1, maxLength: 128 }
+              notes:
+                type: string
+                maxLength: 10000
+                description: Speaker notes for authorized project participants and PPTX/JSON export. Excluded from public snapshot responses.
+              transition:
+                type: string
+                enum: [none, fade, slide]
+                description: Display transition when entering this page in the Forma presentation viewer. Omission means none; not a PowerPoint animation instruction.
               canvas:
                 type: object
                 required: [objects]
                 properties:
                   objects:
-                    { type: array, maxItems: 2000, items: { type: object } }
-                  background: { type: string }
+                    type: array
+                    maxItems: 2000
+                    items: { $ref: "#/components/schemas/FabricObject" }
+                  background: { type: [string, object, "null"] }
+    FabricObject:
+      type: object
+      required: [type]
+      additionalProperties: true
+      description: Serialized Fabric object. Rendering properties, groups and optional application metadata are preserved in private documents. Generic project validation checks the document envelope and object types/IDs; application tools validate their own metadata model.
+      properties:
+        type: { type: string }
+        id: { type: string, maxLength: 128 }
+        objects:
+          type: array
+          items: { $ref: "#/components/schemas/FabricObject" }
+        formaData:
+          $ref: "#/components/schemas/ChartMetadata"
+    ChartMetadata:
+      type: object
+      required: [version, kind, chartType, title, palette, width, height, headers, rows]
+      description: >-
+        Application metadata attached as formaData to chart/table Fabric groups, with the
+        full editable data matrix. It travels with private projects, personal templates
+        and JSON exports. The data tool validates this schema before creating/updating
+        a group; it is not a separate server analytics endpoint. Public snapshots strip
+        formaData while retaining the group's rendered shapes and visible labels.
+        Chart CSV import is limited to 100000 bytes. Row widths must match the header.
+        Charts require exactly two columns (label and number); labels contain 1–100
+        characters and values must parse as finite numbers with absolute value at most
+        1000000000000. Pie charts allow at most 12 rows with strictly positive values.
+      properties:
+        version: { type: integer, const: 1 }
+        kind: { type: string, enum: [chart, table] }
+        chartType: { type: string, enum: [bar, line, pie] }
+        title: { type: string, maxLength: 120 }
+        palette: { type: string, enum: [violet, ocean, sunset] }
+        width: { type: number, minimum: 40, maximum: 4000 }
+        height: { type: number, minimum: 40, maximum: 4000 }
+        headers:
+          type: array
+          minItems: 1
+          maxItems: 8
+          uniqueItems: true
+          items: { type: string, minLength: 1, maxLength: 80 }
+        rows:
+          type: array
+          minItems: 1
+          maxItems: 30
+          items:
+            type: array
+            minItems: 1
+            maxItems: 8
+            items: { type: string, maxLength: 1000 }
+    PublicDocument:
+      type: object
+      required: [pages]
+      additionalProperties: false
+      description: Sanitized public artwork only. Page notes, transitions and object formaData are omitted; rendered text and chart labels remain visible as part of the design.
+      properties:
+        pages:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            type: object
+            required: [id, canvas]
+            additionalProperties: false
+            properties:
+              id: { type: string, description: Canonical public page identifier unrelated to the private page ID. }
+              canvas:
+                type: object
+                required: [objects]
+                properties:
+                  objects:
+                    type: array
+                    maxItems: 2000
+                    items: { $ref: "#/components/schemas/PublicFabricObject" }
+                  background: { type: [string, object, "null"] }
+    PublicFabricObject:
+      type: object
+      not:
+        required: [formaData]
+      additionalProperties: true
+      description: Allowlisted inert Fabric properties. Arbitrary private fields and raw chart metadata are removed recursively; embedded raster images are verified and normalized to PNG.
+      properties:
+        type: { type: string }
+        src: { type: string, pattern: "^data:image/png;base64," }
+        objects:
+          type: array
+          items: { $ref: "#/components/schemas/PublicFabricObject" }
     ProjectInput:
       type: object
       properties:
@@ -178,6 +277,61 @@ components:
           description: Optional title with {{column}} placeholders. Resolved names must contain 1–200 characters; default is source title followed by row number.
           examples: ["Certificate — {{name}}"]
         mode: { type: string, enum: [projects], default: projects }
+    PersonalTemplate:
+      type: object
+      required: [id, title, category, kind, width, height, thumbnail, pageCount, revision, created, updated]
+      description: Private template summary. Documents and original project identifiers are not returned by the library listing.
+      properties:
+        id: { type: string }
+        title: { type: string, minLength: 1, maxLength: 200 }
+        category: { type: string, maxLength: 60 }
+        kind: { type: string, maxLength: 40 }
+        width: { type: integer, minimum: 100, maximum: 6000 }
+        height: { type: integer, minimum: 100, maximum: 6000 }
+        thumbnail:
+          type: [string, "null"]
+          maxLength: 1000000
+          description: Embedded PNG/JPG/WebP thumbnail when a supported source preview is available; otherwise null.
+        pageCount: { type: integer, minimum: 1, maximum: 100 }
+        revision: { type: integer, minimum: 1 }
+        created: { type: string, format: date-time }
+        updated: { type: string, format: date-time }
+    PersonalTemplateResponse:
+      type: object
+      required: [template]
+      properties:
+        template: { $ref: "#/components/schemas/PersonalTemplate" }
+    PersonalTemplateInput:
+      type: object
+      required: [projectId, title]
+      properties:
+        projectId: { type: string, minLength: 1, maxLength: 128 }
+        title:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: Trimmed, nonblank title without ASCII control characters.
+        category:
+          type: string
+          maxLength: 60
+          default: ""
+          description: Trimmed category without ASCII control characters. An empty category is allowed.
+    PersonalTemplateUpdate:
+      type: object
+      required: [revision]
+      anyOf:
+        - required: [title]
+        - required: [category]
+        - required: [projectId]
+      properties:
+        revision: { type: integer, minimum: 1, description: Current template revision; a mismatch returns 409. }
+        title: { type: string, minLength: 1, maxLength: 200 }
+        category: { type: string, maxLength: 60 }
+        projectId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: Optional replacement source project; the caller must have editor or owner access. Omitting it preserves the saved template document.
     PublicationInput:
       type: object
       description: >-
@@ -223,7 +377,7 @@ components:
         updated: { type: string, format: date-time }
         expiresAt: { type: [string, "null"], format: date-time }
         contentHash: { type: string, pattern: "^[a-f0-9]{64}$", description: SHA-256 of the canonical stored snapshot document. }
-        document: { $ref: "#/components/schemas/Document" }
+        document: { $ref: "#/components/schemas/PublicDocument" }
   responses:
     BadRequest:
       description: Invalid input.
@@ -859,8 +1013,10 @@ paths:
       summary: Read a public design snapshot without signing in.
       description: >-
         A valid unrevoked, unexpired token is sufficient. Returns snapshot pages and presentation
-        metadata only, without owner identity, member list, comments, project revision history
-        or access to other private assets. Images are verified embedded PNG data URIs. All
+        metadata only, without owner identity, member list, comments, project revision history,
+        speaker notes, page transition metadata, raw chart/table formaData or access to other
+        private assets. Rendered chart shapes and visible labels remain part of the artwork.
+        Images are verified embedded PNG data URIs. All
         responses use Cache-Control no-store, Referrer-Policy no-referrer and X-Robots-Tag
         noindex, nofollow, noarchive. Trashed and permanently deleted projects are unavailable.
       responses:
@@ -880,6 +1036,233 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "410":
           description: Link expired or was revoked by its owner.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /personal-templates:
+    get:
+      summary: Search the current account's private template library.
+      description: >-
+        Only templates owned by the current account are visible; templates have no member
+        sharing or public-link API. Summaries omit documents and the original source project.
+        Search is trimmed, NFKC-normalized and case-insensitive across title and category.
+        Categories and usage describe the whole private library, independent of filters.
+        Authenticated template responses use Cache-Control no-store.
+      parameters:
+        - name: q
+          in: query
+          description: Optional search text without ASCII control characters.
+          schema: { type: string, maxLength: 200, default: "" }
+        - name: category
+          in: query
+          description: Optional exact category match; empty string selects uncategorized templates.
+          schema: { type: string, maxLength: 60 }
+      responses:
+        "200":
+          description: Filtered private templates, all library categories and current quota usage.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [templates, categories, limits, usage]
+                properties:
+                  templates:
+                    type: array
+                    maxItems: 100
+                    items: { $ref: "#/components/schemas/PersonalTemplate" }
+                  categories:
+                    type: array
+                    uniqueItems: true
+                    items: { type: string, maxLength: 60 }
+                  limits:
+                    type: object
+                    required: [maxTemplates, maxStorageBytes]
+                    properties:
+                      maxTemplates: { type: integer, const: 100 }
+                      maxStorageBytes: { type: integer, const: 52428800 }
+                  usage:
+                    type: object
+                    required: [count, storageBytes]
+                    properties:
+                      count: { type: integer, minimum: 0, maximum: 100 }
+                      storageBytes:
+                        type: integer
+                        minimum: 0
+                        maximum: 52428800
+                        description: UTF-8 byte count of stored template documents plus embedded thumbnails.
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      summary: Save a private template snapshot from an accessible saved project.
+      description: >-
+        Caller needs owner or editor access to the source; viewer access is insufficient.
+        Uses the saved server document and dimensions, including speaker notes and chart
+        metadata. Saves an independent snapshot owned by the caller, without the source
+        project's members, comments, version history or publications. Future source edits
+        and deletion do not change the template. The original project is not modified.
+        At most 100 templates and 52428800 bytes of documents plus thumbnails per account.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PersonalTemplateInput" }
+      responses:
+        "201":
+          description: Private snapshot saved at template revision 1. Response uses Cache-Control no-store.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PersonalTemplateResponse" }
+        "400":
+          description: Invalid labels/source project identifier or unsupported source document/dimensions.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: Source editor/owner access required, or request Origin disallowed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Source project is absent or inaccessible to this account.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: Saving would exceed the 100-template or 50 MiB private-library quota.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "410":
+          description: Source project is in the trash; restore it first.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /personal-templates/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Private template identifier, not a project identifier.
+        schema: { type: string }
+    patch:
+      summary: Rename, recategorize or replace a private template snapshot with revision checking.
+      description: >-
+        Only the template owner may modify it. At least one of title, category or projectId
+        is required alongside the current template revision. Supplying projectId replaces
+        the snapshot from a source project the caller can edit. Labels are trimmed and
+        reject blank titles/control characters. Replacement is atomic and checks the
+        storage quota after subtracting the existing snapshot's stored bytes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PersonalTemplateUpdate" }
+      responses:
+        "200":
+          description: Template updated and revision incremented. Response uses Cache-Control no-store.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PersonalTemplateResponse" }
+        "400":
+          description: Invalid/missing revision, no changes, invalid labels or invalid source snapshot.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: Replacement source editor/owner access required, or request Origin disallowed.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: Template is absent or belongs to another account, or replacement source is inaccessible.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: Stale template revision or replacement would exceed the 50 MiB library quota.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "410":
+          description: Replacement source project is in the trash.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    delete:
+      summary: Permanently delete an owned private template without deleting created projects.
+      requestBody:
+        description: Optional revision guard; omitting the body deletes the current owned template.
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                revision: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Template deleted; quota space released. Independent designs created from it remain intact.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ok" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: Template absent or owned by another account.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: Optional supplied revision does not match the current template revision.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /personal-templates/{id}/instantiate:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Private template identifier owned by the current account.
+        schema: { type: string }
+    post:
+      summary: Create an independent private design from an owned template snapshot.
+      description: >-
+        Uses the saved template pages, dimensions, kind, thumbnail, notes and application
+        metadata; the original source project need not exist or remain accessible.
+        The new design belongs to the current account and starts at project revision 1,
+        with no members or public publications. Changes to the design and template are independent.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                  description: Optional trimmed nonblank name without ASCII control characters; defaults to the template title.
+      responses:
+        "201":
+          description: Independent editable project created. Response uses Cache-Control no-store.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [project]
+                properties:
+                  project: { $ref: "#/components/schemas/Project" }
+        "400":
+          description: Invalid project title or invalid saved template document.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404":
+          description: Template absent or owned by another account.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }

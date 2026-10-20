@@ -180,3 +180,7 @@ test("PUB-08 safe nested groups, clip paths, radial gradients and image filters 
   assert.equal(result.objects[0].fill.coords.r2, 0.5);
   assert.equal(result.objects[0].fill.colorStops.length, 2);
 });
+
+test('PUB-09 speaker notes and backing chart data stay private in public snapshots',async()=>{
+ const d=document('Visible chart title');d.pages[0].notes='Private speaker instructions';d.pages[0].transition='fade';d.pages[0].canvas.objects[0].formaData={kind:'table',csv:'Private backing metadata'};const p=await project(d);const published=await publish(p.id);assert.equal(published.status,201);const guest=await request('/publications/'+published.data.publication.token);const serialized=JSON.stringify(guest.data);assert.equal(serialized.includes('Private speaker instructions'),false);assert.equal(serialized.includes('Private backing metadata'),false);assert.equal(guest.data.publication.document.pages[0].notes,undefined);assert.equal(guest.data.publication.document.pages[0].transition,undefined);assert.equal(guest.data.publication.document.pages[0].canvas.objects[0].text,'Visible chart title');
+});

@@ -420,3 +420,20 @@ test("Runtime: an occupied port exits with failure instead of reporting a succes
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('CRDT: speaker notes and slide transition merge independently from canvas and local Undo',()=>{
+ const base=new Y.Doc();const state=seed();state.pages[0].notes='Initial notes';state.pages[0].transition='none';writeSnapshot(base,state);const local=fork(base),remote=fork(base),before=readSnapshot(base);const origin={};const undo=new Y.UndoManager([local.getMap('pages')],{trackedOrigins:new Set([origin])});
+ const mine=structuredClone(before);mine.pages[0].notes='Presenter notes';writeSnapshot(local,mine,before,origin);const theirs=structuredClone(before);theirs.pages[0].transition='fade';theirs.pages[0].canvas.objects[0].left=38.25;writeSnapshot(remote,theirs,before);Y.applyUpdate(local,Y.encodeStateAsUpdate(remote),'remote');Y.applyUpdate(remote,Y.encodeStateAsUpdate(local),'remote');assert.deepEqual(readSnapshot(local),readSnapshot(remote));assert.equal(readSnapshot(local).pages[0].notes,'Presenter notes');assert.equal(readSnapshot(local).pages[0].transition,'fade');undo.undo();assert.equal(readSnapshot(local).pages[0].notes,'Initial notes');assert.equal(readSnapshot(local).pages[0].transition,'fade');assert.equal(readSnapshot(local).pages[0].canvas.objects[0].left,38.25);for(const doc of [base,local,remote])doc.destroy();
+});
+
+test('CRDT: legacy page states accept metadata without losing objects and allow notes removal',()=>{
+ const doc=new Y.Doc();writeSnapshot(doc,seed());doc.getMap('pages').get('page-a').delete('metadata');const before=readSnapshot(doc),next=structuredClone(before);next.pages[0].notes='Legacy upgraded';next.pages[0].transition='slide';writeSnapshot(doc,next,before);assert.deepEqual(readSnapshot(doc),next);const cleared=structuredClone(next);delete cleared.pages[0].notes;writeSnapshot(doc,cleared,next);assert.equal(readSnapshot(doc).pages[0].notes,undefined);assert.equal(readSnapshot(doc).pages[0].canvas.objects.length,1);doc.destroy();
+});
+
+test('CRDT: first notes and concurrent canvas edits on legacy pages never replace each other',()=>{
+ const base=new Y.Doc();writeSnapshot(base,seed());const a=fork(base),b=fork(base);a.clientID=1;b.clientID=2;const before=readSnapshot(base),mine=structuredClone(before),theirs=structuredClone(before);mine.pages[0].notes='Notes must survive';mine.pages[0].transition='fade';theirs.pages[0].canvas.objects[0].left=22;writeSnapshot(a,mine,before);writeSnapshot(b,theirs,before);const updateA=Y.encodeStateAsUpdate(a),updateB=Y.encodeStateAsUpdate(b);Y.applyUpdate(a,updateB);Y.applyUpdate(b,updateA);assert.deepEqual(readSnapshot(a),readSnapshot(b));assert.equal(readSnapshot(a).pages[0].notes,'Notes must survive');assert.equal(readSnapshot(a).pages[0].transition,'fade');assert.equal(readSnapshot(a).pages[0].canvas.objects[0].left,22);for(const d of [base,a,b])d.destroy();
+});
+
+test('CRDT: prior nested notes remain readable and explicit removal never restores their old value',()=>{
+ const base=new Y.Doc();writeSnapshot(base,seed());const nested=new Y.Map();nested.set('notes','Nested original');nested.set('transition','slide');base.getMap('pages').get('page-a').set('metadata',nested);const a=fork(base),b=fork(base);a.clientID=1;b.clientID=2;const before=readSnapshot(base),mine=structuredClone(before),theirs=structuredClone(before);delete mine.pages[0].notes;theirs.pages[0].canvas.objects[0].left=44;writeSnapshot(a,mine,before);writeSnapshot(b,theirs,before);Y.applyUpdate(a,Y.encodeStateAsUpdate(b));Y.applyUpdate(b,Y.encodeStateAsUpdate(a));assert.deepEqual(readSnapshot(a),readSnapshot(b));assert.equal(readSnapshot(a).pages[0].notes,undefined);assert.equal(readSnapshot(a).pages[0].transition,'slide');assert.equal(readSnapshot(a).pages[0].canvas.objects[0].left,44);for(const d of [base,a,b])d.destroy();
+});
