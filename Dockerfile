@@ -1,15 +1,20 @@
 FROM node:24-bookworm-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN --mount=type=secret,id=cloud_ca,required=false \
-    if [ -f /run/secrets/cloud_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/cloud_ca; fi; \
-    npm ping --fetch-retries=0 --fetch-timeout=15000 && \
-    npm ci --no-audit --no-fund --fetch-retries=0 --fetch-timeout=30000
 COPY index.html tsconfig.json vite.config.ts ./
 COPY src ./src
 COPY public ./public
 COPY shared ./shared
-RUN npm run build && npm prune --offline --omit=dev --ignore-scripts
+# Keep install and offline prune in one RUN: a cached dependency layer must
+# never leave prune dependent on a BuildKit cache that was garbage-collected.
+RUN --mount=type=cache,id=forma-npm,target=/root/.npm,sharing=locked \
+    --mount=type=secret,id=cloud_ca,required=false \
+    if [ -f /run/secrets/cloud_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/cloud_ca; fi; \
+    npm ci --no-audit --no-fund --prefer-offline \
+      --fetch-retries=4 --fetch-retry-factor=2 \
+      --fetch-retry-mintimeout=2000 --fetch-retry-maxtimeout=20000 \
+      --fetch-timeout=120000 --maxsockets=8 && \
+    npm run build && npm prune --offline --omit=dev --ignore-scripts
 
 FROM node:24-bookworm-slim AS runtime
 ENV NODE_ENV=production PORT=8192 DATA_DIR=/app/data
